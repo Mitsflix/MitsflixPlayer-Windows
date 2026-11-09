@@ -1,0 +1,53 @@
+{
+  "name": "mitsflix-player",
+  "productName": "Mitsflix Player",
+  "version": "1.0.0",
+  "description": "Mitsflix Player for Windows — live TV, movies and series from any IPTV playlist.",
+  "author": "Mitsflix",
+  "homepage": "https://mitsflix.com",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --publish never",
+    "release": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2",
+    "hls.js": "^1.6.2",
+    "mpegts.js": "^1.8.0"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.mitsflix.player.windows",
+    "productName": "Mitsflix Player",
+    "copyright": "Mitsflix",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["main.js", "preload.js", "src/**/*", "package.json"],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.ico",
+      "artifactName": "MitsflixPlayer-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Mitsflix Player",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "runAfterFinish": true
+    },
+    "publish": [{
+      "provider": "github",
+      "owner": "Mitsflix",
+      "repo": "MitsflixPlayer-Windows",
+      "releaseType": "release"
+    }]
+  }
+}

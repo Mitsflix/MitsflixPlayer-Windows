@@ -1,0 +1,53 @@
+name: Build Windows app
+
+# Every push builds the installer. When package.json has a version that isn't released yet
+# (no v<version> tag), the build is also published as a GitHub release, and installed copies
+# update themselves from it.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Release this version?
+        id: v
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "v$VERSION is already released: building only."
+            echo "publish=never" >> "$GITHUB_OUTPUT"
+          else
+            echo "Publishing v$VERSION."
+            echo "publish=always" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build installer
+        run: npx electron-builder --win --publish ${{ steps.v.outputs.publish }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MitsflixPlayer-Setup
+          path: dist/*.exe
+          if-no-files-found: error
