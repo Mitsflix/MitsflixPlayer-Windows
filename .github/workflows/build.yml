@@ -42,9 +42,23 @@ jobs:
           fi
 
       - name: Build installer
-        run: npx electron-builder --win --publish ${{ steps.v.outputs.publish }}
+        run: npx electron-builder --win --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # One upload step, so the installer, its blockmap and latest.yml (which installed copies read to
+      # find updates) all land in the same release.
+      - name: Publish release
+        if: steps.v.outputs.publish == 'always'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          ls -la dist
+          gh release create "v$VERSION" dist/MitsflixPlayer-Setup.exe dist/MitsflixPlayer-Setup.exe.blockmap dist/latest.yml \
+            --target "$GITHUB_SHA" --title "Mitsflix Player for Windows $VERSION" \
+            --notes "Download **MitsflixPlayer-Setup.exe** below. Already installed? The app updates itself."
 
       - uses: actions/upload-artifact@v4
         with:

@@ -1,8 +1,8 @@
 {
   "name": "mitsflix-player",
   "productName": "Mitsflix Player",
-  "version": "1.0.0",
-  "description": "Mitsflix Player for Windows — live TV, movies and series from any IPTV playlist.",
+  "version": "1.0.1",
+  "description": "Mitsflix Player for Windows \u2014 live TV, movies and series from any IPTV playlist.",
   "author": "Mitsflix",
   "homepage": "https://mitsflix.com",
   "main": "main.js",
@@ -24,10 +24,25 @@
     "appId": "com.mitsflix.player.windows",
     "productName": "Mitsflix Player",
     "copyright": "Mitsflix",
-    "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["main.js", "preload.js", "src/**/*", "package.json"],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "package.json"
+    ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.ico",
       "artifactName": "MitsflixPlayer-Setup.${ext}"
     },
@@ -43,11 +58,13 @@
       "installerHeaderIcon": "build/icon.ico",
       "runAfterFinish": true
     },
-    "publish": [{
-      "provider": "github",
-      "owner": "Mitsflix",
-      "repo": "MitsflixPlayer-Windows",
-      "releaseType": "release"
-    }]
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Mitsflix",
+        "repo": "MitsflixPlayer-Windows",
+        "releaseType": "release"
+      }
+    ]
   }
 }
