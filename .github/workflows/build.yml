@@ -60,6 +60,18 @@ jobs:
             --target "$GITHUB_SHA" --title "Mitsflix Player for Windows $VERSION" \
             --notes "Download **MitsflixPlayer-Setup.exe** below. Already installed? The app updates itself."
 
+      - name: Announce in Discord
+        if: steps.v.outputs.publish == 'always'
+        shell: bash
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          python discord_post.py \
+            --title "🖥️ Mitsflix Player for Windows $VERSION is out" \
+            --url "https://github.com/${{ github.repository }}/releases/tag/v$VERSION" \
+            --footer "Already installed? It updates itself.\n**Download:** https://github.com/${{ github.repository }}/releases/latest/download/MitsflixPlayer-Setup.exe"
+
       - uses: actions/upload-artifact@v4
         with:
           name: MitsflixPlayer-Setup
