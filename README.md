@@ -29,7 +29,10 @@ On a TV box or Fire Stick? Use the Android version: Downloader code **6284643**.
 - **Continue watching**, **favourites** and **recent channels** on Home
 - **Search** across channels, movies and series
 - Any playlist: **Xtream Codes** login or **M3U** link, and more than one playlist
-- Full-screen player with keyboard shortcuts, subtitles and audio tracks where the stream has them
+- **Downloads**: save movies, episodes or a whole season to your PC and watch without internet, with pause and resume
+- **Record live TV** now, for a set length, at a set time or from the guide, and keep watching the channel while it records
+- **Subtitles** for any movie or episode: use the ones in the stream, your own subtitle file, or find them online with a free OpenSubtitles account, and fix the timing if they're early or late
+- Full-screen player with keyboard shortcuts and a choice of audio tracks where the stream has them
 - Gold Mitsflix look, automatic updates
 
 **Keyboard:** Space play/pause · ← → skip 10s · ↑ ↓ volume (change channel on Live TV) · F full screen · M mute · N next episode · Esc close
