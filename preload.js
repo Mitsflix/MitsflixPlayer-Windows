@@ -23,5 +23,11 @@ contextBridge.exposeInMainWorld('mitsflix', {
   dlOpenFolder: () => ipcRenderer.invoke('dl:openFolder'),
   dlChooseFolder: () => ipcRenderer.invoke('dl:chooseFolder'),
   onDownloads: (cb) => ipcRenderer.on('dl:update', (_e, s) => cb(s)),
+  subsStatus: () => ipcRenderer.invoke('subs:status'),
+  subsLogin: (user, password) => ipcRenderer.invoke('subs:login', user, password),
+  subsLogout: () => ipcRenderer.invoke('subs:logout'),
+  subsSearch: (q) => ipcRenderer.invoke('subs:search', q),
+  subsDownload: (fileId) => ipcRenderer.invoke('subs:download', fileId),
+  subsPickFile: () => ipcRenderer.invoke('subs:pickFile'),
   onUpdate: (cb) => ipcRenderer.on('update:state', (_e, s) => cb(s)),
 });

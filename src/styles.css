@@ -304,3 +304,17 @@ img { display: block; }
 .item.dl .pb { height: 4px; background: #2a2418; border-radius: 4px; margin-top: 8px; overflow: hidden; max-width: 520px; }
 .item.dl .pb i { display: block; height: 100%; background: var(--gold); transition: width .4s linear; }
 .item.dl .actions { flex-wrap: nowrap; flex: none; }
+
+/* ---- Subtitles ---- */
+.menu .nudge { display: flex; align-items: center; gap: 6px; padding: 6px 12px 8px; color: var(--muted); font-size: 13px; }
+.menu .nudge span { flex: 1; }
+.menu .nudge button { display: inline-block; width: auto; padding: 6px 10px; border: 1px solid var(--line); text-align: center; font-variant-numeric: tabular-nums; }
+.sub-search { display: grid; grid-template-columns: 1fr 190px auto; gap: 8px; }
+.sub-results { margin-top: 14px; display: grid; gap: 6px; }
+.sub-row { display: grid; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid #1f1a12; background: #0f0d09; color: var(--text); }
+.sub-row:hover { border-color: var(--gold-2); }
+.sub-row.busy { opacity: .5; pointer-events: none; }
+.sub-row .n { font-weight: 600; overflow-wrap: anywhere; }
+.sub-row .m { color: var(--dim); font-size: 12px; }
+.empty-note.err { color: #ffb4a8; }
+video::cue { font-family: "Segoe UI", system-ui, sans-serif; background: rgba(0,0,0,.55); }

@@ -14,6 +14,8 @@ const bridge = window.mitsflix || {
   dlRecord: async () => ({ ok: false, error: 'Recording needs the installed app.' }), dlPause: async () => ({}), dlResume: async () => ({}),
   dlRemove: async () => ({}), dlStopRecording: async () => ({}), dlHold: async () => {}, dlShow: async () => {}, dlOpenFolder: async () => {},
   dlChooseFolder: async () => '', onDownloads: () => {},
+  subsStatus: async () => ({ ready: false, user: '' }), subsLogin: async () => ({ ok: false, error: 'Needs the installed app.' }), subsLogout: async () => ({}),
+  subsSearch: async () => ({ ok: false, error: 'Needs the installed app.' }), subsDownload: async () => ({ ok: false, error: 'Needs the installed app.' }), subsPickFile: async () => ({ ok: true, value: null }),
 };
 
 const SITE = 'https://mitsflix.com';
@@ -708,7 +710,7 @@ function playMovie(m, startAt) {
   const saved = progress()[key];
   if (startAt === undefined) startAt = saved && saved.dur && saved.pos / saved.dur < 0.95 ? saved.pos : 0;
   openPlayer({
-    kind: 'vod', title: m.name, sub: m.year || '',
+    kind: 'vod', title: m.name, sub: m.year || '', subQuery: { query: m.name, year: m.year },
     sources: [localCopy('m:' + m.id) || (pl.type === 'm3u' ? m.url : xtUrl(pl, 'movie', m.id, m.ext || 'mp4'))],
     startAt, progressKey: key, progressMeta: { name: m.name, poster: m.poster },
     onClose: () => { if (state.view === 'movies' || state.view === 'home') render(); },
@@ -818,7 +820,7 @@ function playEpisode(s, ep, all) {
   const nextEp = i >= 0 ? all[i + 1] : null;
   const label = 'S' + ep.season + ' E' + (ep.episode_num || '') + (ep.title ? ' · ' + ep.title : '');
   openPlayer({
-    kind: 'vod', title: s.name, sub: label,
+    kind: 'vod', title: s.name, sub: label, subQuery: { query: s.name, season: ep.season, episode: ep.episode_num },
     sources: [localCopy('e:' + ep.id) || xtUrl(pl, 'series', ep.id, ep.container_extension || 'mp4')],
     startAt, progressKey: key, progressMeta: { seriesId: s.id, name: s.name, label: s.name + ' · S' + ep.season + 'E' + (ep.episode_num || ''), poster: s.poster },
     next: nextEp ? () => playEpisode(s, nextEp, all) : null,
@@ -910,6 +912,19 @@ function viewSettings() {
     h('button', { class: 'btn gold', onclick: () => { const close = modal('Add a playlist', playlistForm(null, async (np) => { close(); await addOrUpdatePlaylist(np); }, () => close())); } }, '+ Add playlist'),
     h('button', { class: 'btn', onclick: () => bridge.open(SITE) }, 'Get a playlist at mitsflix.com')));
   box.append(plSec);
+  const subsRow = h('div', { class: 'item' });
+  const drawSubs = async () => {
+    const st = await bridge.subsStatus();
+    subsRow.replaceChildren(h('div', { class: 'grow' },
+      h('div', { class: 't' }, st.user ? 'Signed in to OpenSubtitles as ' + st.user : 'Online subtitles'),
+      h('div', { class: 's' }, !st.ready ? 'Online subtitle search isn\'t switched on yet. You can add a subtitle file from the player\'s subtitles button.'
+        : st.user ? 'Find subtitles for any movie or episode from the player\'s subtitles button.' + (st.perDay ? ' Your account allows ' + st.perDay + ' a day.' : '')
+        : 'Sign in with a free OpenSubtitles account to add subtitles to any movie or episode.')),
+    st.user ? h('button', { class: 'btn small', onclick: async () => { await bridge.subsLogout(); drawSubs(); } }, 'Sign out')
+      : st.ready ? h('button', { class: 'btn small', onclick: () => { const close = modal('Sign in to OpenSubtitles', subsSignInForm(() => { close(); drawSubs(); })); } }, 'Sign in') : null);
+  };
+  drawSubs();
+  box.append(h('div', { class: 'section' }, h('h2', null, 'Subtitles'), subsRow));
 
   const upd = h('div', { class: 's' });
   const updBtn = h('button', { class: 'btn small' }, 'Check for updates');
@@ -1176,7 +1191,9 @@ function playDownloaded(it) {
     return;
   }
   const saved = it.progressKey ? progress()[it.progressKey] : null;
+  const se = /^S(\d+) E(\d+)/.exec(it.sub || '');
   openPlayer({ kind: 'vod', local: true, title: it.title, sub: it.sub || '', sources: [localUrl(it)],
+    subQuery: it.kind === 'episode' && se ? { query: it.title, season: se[1], episode: se[2] } : { query: it.title, year: it.kind === 'movie' ? it.sub : '' },
     startAt: saved && saved.dur && saved.pos / saved.dur < 0.95 ? saved.pos : 0,
     progressKey: it.progressKey || null, progressMeta: it.meta || {},
     onClose: () => { if (state.view === 'downloads') render(); } });
@@ -1265,6 +1282,104 @@ function viewDownloads() {
   return page;
 }
 
+// ============================================================================ Subtitles
+
+// SRT, WebVTT and ASS/SSA text into plain cues: { s, e, t } in seconds.
+function parseSubs(text) {
+  const src = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const cues = [];
+  const clean = (t) => t.replace(/\{\\[^}]*\}/g, '').replace(/<\/?font[^>]*>/gi, '').trim();
+  if (/^\[Script Info\]/mi.test(src)) {
+    const at = (x) => { const p = /(\d+):(\d\d):(\d\d)[.:](\d\d)/.exec(x); return p ? +p[1] * 3600 + +p[2] * 60 + +p[3] + +p[4] / 100 : NaN; };
+    for (const line of src.split('\n')) {
+      const m = /^Dialogue:\s*[^,]*,([^,]+),([^,]+),(?:[^,]*,){6}(.*)$/.exec(line);
+      if (m) cues.push({ s: at(m[1]), e: at(m[2]), t: clean(m[3].replace(/\\N/gi, '\n').replace(/\\h/g, ' ')) });
+    }
+  } else {
+    const at = (x) => { const m = /(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})/.exec(x); return m ? +(m[1] || 0) * 3600 + +m[2] * 60 + +m[3] + +m[4].padEnd(3, '0') / 1000 : NaN; };
+    for (const block of src.split(/\n{2,}/)) {
+      const lines = block.split('\n'), i = lines.findIndex((l) => l.includes('-->'));
+      if (i < 0) continue;
+      const [a, b] = lines[i].split('-->');
+      cues.push({ s: at(a), e: at(b), t: clean(lines.slice(i + 1).join('\n')) });
+    }
+  }
+  return cues.filter((c) => isFinite(c.s) && isFinite(c.e) && c.e > c.s && c.t).sort((a, b) => a.s - b.s);
+}
+
+// Whether online subtitle search is switched on (the Mitsflix site answers for it). null = not known yet.
+let subsReady = null;
+function checkSubs() { if (subsReady !== true) bridge.subsStatus().then((st) => { subsReady = !!st.ready; }).catch(() => {}); }
+
+const SUB_LANGS = [['en', 'English'], ['ar', 'Arabic'], ['zh-cn', 'Chinese (simplified)'], ['zh-tw', 'Chinese (traditional)'], ['hr', 'Croatian'], ['cs', 'Czech'], ['da', 'Danish'], ['nl', 'Dutch'], ['fi', 'Finnish'],
+  ['fr', 'French'], ['de', 'German'], ['el', 'Greek'], ['he', 'Hebrew'], ['hi', 'Hindi'], ['hu', 'Hungarian'], ['id', 'Indonesian'], ['it', 'Italian'], ['ja', 'Japanese'], ['ko', 'Korean'], ['no', 'Norwegian'],
+  ['fa', 'Persian'], ['pl', 'Polish'], ['pt-pt', 'Portuguese'], ['pt-br', 'Portuguese (Brazil)'], ['ro', 'Romanian'], ['ru', 'Russian'], ['sr', 'Serbian'], ['es', 'Spanish'], ['sv', 'Swedish'], ['th', 'Thai'],
+  ['tr', 'Turkish'], ['uk', 'Ukrainian'], ['vi', 'Vietnamese']];
+// Playlist names often carry extras ("EN - Title (2023) [4K]") that confuse a title search.
+const searchTitle = (s) => String(s || '').replace(/^\s*[A-Z]{2,4}\s*[-:|]\s*/, '').replace(/[\[(][^\])]*[\])]/g, ' ').replace(/\b(4k|uhd|fhd|hd|sd|multi|hevc|x26[45])\b/gi, ' ').replace(/\s+/g, ' ').trim();
+
+// The sign-in form for a free OpenSubtitles account. onDone runs once signed in.
+function subsSignInForm(onDone) {
+  const user = h('input', { class: 'input', placeholder: 'OpenSubtitles username', autocomplete: 'username' });
+  const pass = h('input', { class: 'input', type: 'password', placeholder: 'Password', autocomplete: 'current-password' });
+  const err = h('div', { class: 'err' });
+  const btn = h('button', { class: 'btn gold' }, 'Sign in');
+  const submit = async () => {
+    if (!user.value.trim() || !pass.value) { err.textContent = 'Enter your OpenSubtitles username and password.'; return; }
+    btn.disabled = true; btn.textContent = 'Signing in…'; err.textContent = '';
+    const r = await bridge.subsLogin(user.value, pass.value);
+    btn.disabled = false; btn.textContent = 'Sign in';
+    if (r && r.ok === false) { err.textContent = r.error; return; }
+    onDone(r && r.value);
+  };
+  btn.onclick = submit;
+  pass.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  return h('div', { class: 'form' },
+    h('p', { class: 'hint' }, 'Subtitles come from OpenSubtitles. Adding one needs a free account there. You only sign in once.'),
+    user, pass, err,
+    h('div', { class: 'row-btns' }, h('button', { class: 'btn ghost', onclick: () => bridge.open('https://www.opensubtitles.com/en/users/sign_up') }, 'Create a free account'), btn));
+}
+
+function subtitleSearch(q, onPick) {
+  const title = h('input', { class: 'input', value: searchTitle(q.query), placeholder: 'Movie or series name' });
+  const lang = h('select', { class: 'input' }, ...SUB_LANGS.map(([v, t]) => h('option', { value: v, selected: v === store.get('subLang', 'en') }, t)));
+  const find = h('button', { class: 'btn gold' }, 'Search');
+  const out = h('div', { class: 'sub-results' });
+  const episode = q.season && q.episode ? 'Season ' + q.season + ', episode ' + q.episode : '';
+  const body = h('div', null,
+    h('div', { class: 'sub-search' }, title, lang, find),
+    episode ? h('p', { class: 'hint', style: { margin: '8px 0 0' } }, episode) : null, out);
+  const close = modal('Find subtitles', body);
+  const note = (text, cls = 'empty-note') => out.replaceChildren(h('div', { class: cls }, text));
+  const pick = async (item, row) => {
+    row.classList.add('busy');
+    const r = await bridge.subsDownload(item.id);
+    row.classList.remove('busy');
+    if (r && r.ok === false) { toast(r.error); return; }
+    if (r && r.value && r.value.needLogin) { out.replaceChildren(subsSignInForm(() => { run(); toast('Signed in. Choose your subtitles.'); })); return; }
+    if (r && r.value && onPick(item.name, r.value.text)) { close(); toast('Subtitles added. Fix the timing from the subtitles button if they\'re early or late.'); }
+  };
+  const run = async () => {
+    if (!title.value.trim()) { note('Type the name of what you\'re watching.'); return; }
+    store.set('subLang', lang.value);
+    out.replaceChildren(h('div', { class: 'loading', style: { position: 'static', padding: '30px' } }, h('div', { class: 'spinner' })));
+    const r = await bridge.subsSearch({ query: title.value, language: lang.value, season: q.season, episode: q.episode, year: q.year });
+    if (r && r.ok === false) { note(r.error, 'empty-note err'); return; }
+    const list = (r && r.value) || [];
+    if (!list.length) { note('No subtitles found. Try a shorter name or another language.'); return; }
+    out.replaceChildren(...list.map((item) => {
+      const row = h('button', { class: 'sub-row' },
+        h('span', { class: 'n' }, item.name),
+        h('span', { class: 'm' }, [item.title, item.downloads ? item.downloads.toLocaleString() + ' downloads' : '', item.hi ? 'For hard of hearing' : '', item.ai ? 'Machine translated' : ''].filter(Boolean).join(' · ')));
+      row.onclick = () => pick(item, row);
+      return row;
+    }));
+  };
+  find.onclick = run;
+  title.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+  run();
+}
+
 // ============================================================================ Player
 
 let playerSession = null;
@@ -1285,7 +1400,41 @@ function openPlayer(opts) {
   video.volume = Number(vol.value);
   const time = h('span', { class: 'time' });
   const ccBtn = pb(ICON.cc, 'Subtitles & audio', () => toggleMenu());
-  ccBtn.hidden = true;
+  ccBtn.hidden = isLive;
+  checkSubs();
+  // Subtitles added by the viewer (found online or from a file) live in one extra track.
+  const subsKey = !isLive && opts.progressKey ? 'subs_' + plKey(opts.progressKey) : null;
+  let extTrack = null, ext = null; // ext: { name, cues, offset }
+  const drawExt = () => {
+    if (!extTrack) extTrack = video.addTextTrack('subtitles', 'Added subtitles', 'und');
+    [...(extTrack.cues || [])].forEach((c) => extTrack.removeCue(c));
+    if (!ext) { extTrack.mode = 'disabled'; return; }
+    for (const c of ext.cues) {
+      const s = c.s + ext.offset, e = c.e + ext.offset;
+      if (e > 0) extTrack.addCue(new VTTCue(Math.max(0, s), e, c.t));
+    }
+  };
+  const useSubs = (name, text, cues) => {
+    const parsed = cues || parseSubs(text);
+    if (!parsed.length) { toast('That file doesn\'t look like subtitles.'); return false; }
+    ext = { name, cues: parsed, offset: (cues && ext ? ext.offset : 0) };
+    drawExt();
+    [...video.textTracks].forEach((t) => { if (t.kind === 'subtitles' || t.kind === 'captions') t.mode = t === extTrack ? 'showing' : 'disabled'; });
+    if (subsKey) bridge.cacheSet(subsKey, ext);
+    return true;
+  };
+  const nudgeSubs = (by) => {
+    if (!ext) return;
+    ext.offset = by === 0 ? 0 : Math.round((ext.offset + by) * 10) / 10;
+    drawExt();
+    if (subsKey) bridge.cacheSet(subsKey, ext);
+    drawMenu();
+  };
+  if (subsKey) bridge.cacheGet(subsKey).then((hit) => {
+    if (!hit || !hit.data || !Array.isArray(hit.data.cues) || !playerSession || playerSession.video !== video) return;
+    ext = { name: hit.data.name || 'Subtitles', cues: hit.data.cues, offset: Number(hit.data.offset) || 0 };
+    drawExt(); extTrack.mode = 'showing';
+  });
   const recNow = isLive && opts.liveRef ? dlRecording() : null;
   const recHere = recNow && active() && recNow.plId === active().id && recNow.channelId === String(opts.liveRef.ch.id);
   const recBtn = isLive && opts.liveRef && (!recNow || recHere) ? h('button', { class: 'pbtn text' + (recHere ? ' recording' : ''), title: recHere ? 'Stop recording' : 'Record this channel until you stop it',
@@ -1373,28 +1522,47 @@ function openPlayer(opts) {
     const hls = stream && stream.hls;
     const subs = [...video.textTracks].filter((t) => t.kind === 'subtitles' || t.kind === 'captions');
     const audios = hls && hls.audioTracks && hls.audioTracks.length > 1 ? hls.audioTracks : [];
-    ccBtn.hidden = !subs.length && !audios.length;
+    ccBtn.hidden = isLive && !subs.length && !audios.length;
   };
   const toggleMenu = () => {
     if (!menu.hidden) { menu.hidden = true; return; }
+    drawMenu();
+    menu.hidden = false;
+  };
+  const drawMenu = () => {
     const hls = stream && stream.hls;
     menu.replaceChildren();
-    const subs = [...video.textTracks].filter((t) => t.kind === 'subtitles' || t.kind === 'captions');
-    if (subs.length) {
+    const subs = [...video.textTracks].filter((t) => (t.kind === 'subtitles' || t.kind === 'captions') && (t !== extTrack || ext));
+    if (subs.length || !isLive) {
       menu.append(h('h4', null, 'Subtitles'));
       const anyOn = subs.some((t) => t.mode === 'showing');
       menu.append(h('button', { class: anyOn ? '' : 'on', onclick: () => { subs.forEach((t) => { t.mode = 'disabled'; }); menu.hidden = true; } }, 'Off'));
-      subs.forEach((t) => menu.append(h('button', { class: t.mode === 'showing' ? 'on' : '', onclick: () => { subs.forEach((x) => { x.mode = x === t ? 'showing' : 'disabled'; }); menu.hidden = true; } }, t.label || t.language || 'Subtitles')));
+      subs.forEach((t) => menu.append(h('button', { class: t.mode === 'showing' ? 'on' : '', onclick: () => { subs.forEach((x) => { x.mode = x === t ? 'showing' : 'disabled'; }); menu.hidden = true; } },
+        t === extTrack ? ext.name : (t.label || t.language || 'Subtitles'))));
+    }
+    if (!isLive) {
+      if (ext && extTrack.mode === 'showing') menu.append(h('div', { class: 'nudge' },
+        h('span', null, 'Timing ' + (ext.offset ? (ext.offset > 0 ? '+' : '−') + Math.abs(ext.offset).toFixed(1) + 's' : 'as made')),
+        h('button', { title: 'Show subtitles half a second earlier', onclick: () => nudgeSubs(-0.5) }, 'Earlier'),
+        h('button', { title: 'Show subtitles half a second later', onclick: () => nudgeSubs(0.5) }, 'Later'),
+        ext.offset ? h('button', { onclick: () => nudgeSubs(0) }, 'Reset') : null));
+      if (subsReady !== false) menu.append(h('button', { onclick: () => { menu.hidden = true; video.pause(); subtitleSearch(opts.subQuery || { query: opts.title }, useSubs); } }, 'Find subtitles online…'));
+      menu.append(h('button', { onclick: async () => {
+        menu.hidden = true;
+        const r = await bridge.subsPickFile();
+        if (r && r.ok === false) { toast(r.error); return; }
+        if (r && r.value) useSubs(r.value.name, r.value.text);
+      } }, 'Use a subtitle file…'));
     }
     if (hls && hls.audioTracks && hls.audioTracks.length > 1) {
       menu.append(h('h4', null, 'Audio'));
       hls.audioTracks.forEach((t, i) => menu.append(h('button', { class: hls.audioTrack === i ? 'on' : '', onclick: () => { hls.audioTrack = i; menu.hidden = true; } }, t.name || t.lang || 'Track ' + (i + 1))));
     }
-    menu.hidden = false;
   };
 
   const onKey = (e) => {
     if (e.target && e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+    if ($('.modal-back')) return; // a dialog over the player has the keyboard
     const k = e.key;
     if (k === ' ' || k === 'k' || k === 'K') { e.preventDefault(); togglePlay(); }
     else if (k === 'ArrowLeft' && !isLive) { e.preventDefault(); skip(-10); }
@@ -1433,6 +1601,7 @@ function openPlayer(opts) {
 
 (async function start() {
   if (state.playlists.length && !active()) { state.activeId = state.playlists[0].id; savePlaylists(); }
+  checkSubs();
   bridge.onDownloads(onDownloads);
   bridge.downloads().then(onDownloads).catch(() => {});
   render();

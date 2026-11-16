@@ -1,7 +1,7 @@
 // Mitsflix Player for Windows — main process.
 // Owns the window, network requests for playlist data (no CORS limits here), a small disk cache,
 // and automatic updates from GitHub releases.
-const { app, BrowserWindow, ipcMain, shell, session, net, protocol, dialog, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, session, net, protocol, dialog, powerSaveBlocker, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { Readable } = require('stream');
@@ -200,6 +200,103 @@ ipcMain.handle('dl:chooseFolder', async () => {
   return downloads.setDir(r.filePaths[0]);
 });
 
+// ---- Subtitles -------------------------------------------------------------------------------
+// Online subtitles come from OpenSubtitles through the Mitsflix site, which adds the app's key.
+// Searching is open; adding a subtitle needs the viewer's own free OpenSubtitles account.
+
+const SUBS_BASES = ['https://mitsflix.com/subs', 'https://mitsflix-site.sales-eea.workers.dev/subs'];
+let subsBase = null;
+const subsFile = () => path.join(app.getPath('userData'), 'subtitles.json');
+let subsAccount = null; // { user, password, token, host }
+
+function loadSubsAccount() {
+  try {
+    const j = JSON.parse(fs.readFileSync(subsFile(), 'utf8'));
+    if (j.enc && safeStorage.isEncryptionAvailable()) subsAccount = JSON.parse(safeStorage.decryptString(Buffer.from(j.enc, 'base64')));
+  } catch { subsAccount = null; }
+}
+function saveSubsAccount() {
+  try {
+    if (!subsAccount) { fs.rmSync(subsFile(), { force: true }); return; }
+    // Without Windows' encryption the sign-in only lasts until the app closes.
+    if (safeStorage.isEncryptionAvailable()) fs.writeFileSync(subsFile(), JSON.stringify({ enc: safeStorage.encryptString(JSON.stringify(subsAccount)).toString('base64') }));
+  } catch { /* stays signed in for this session only */ }
+}
+async function subsFetch(pathAndQuery, { method = 'GET', body, auth } = {}) {
+  for (const base of subsBase ? [subsBase] : SUBS_BASES) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const headers = { 'User-Agent': 'MitsflixPlayer/' + app.getVersion(), Accept: 'application/json' };
+      if (body) headers['Content-Type'] = 'application/json';
+      if (auth && subsAccount && subsAccount.token) headers.Authorization = 'Bearer ' + subsAccount.token;
+      if (subsAccount && subsAccount.host) headers['X-OS-Host'] = subsAccount.host;
+      const res = await net.fetch(base + pathAndQuery, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: controller.signal });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { continue; } // not our service answering: try the next address
+      subsBase = base;
+      return { status: res.status, data };
+    } catch { /* try the next address */ } finally { clearTimeout(timer); }
+  }
+  throw new Error('Couldn\'t reach the subtitle service. Check your connection and try again.');
+}
+async function subsSignIn(user, password) {
+  const r = await subsFetch('/login', { method: 'POST', body: { username: user, password } });
+  if (r.status === 401 || r.status === 400) throw new Error('That username or password isn\'t right. Use your OpenSubtitles username, not your email.');
+  if (r.status !== 200 || !r.data.token) throw new Error((r.data && r.data.message) || 'OpenSubtitles couldn\'t sign you in right now. Try again in a minute.');
+  const host = /^(vip-)?api\.opensubtitles\.com$/.test(r.data.base_url || '') ? r.data.base_url : '';
+  subsAccount = { user, password, token: r.data.token, host, perDay: (r.data.user && r.data.user.allowed_downloads) || 0 };
+  saveSubsAccount();
+}
+function decodeText(buf) {
+  if (buf[0] === 0xff && buf[1] === 0xfe) return new TextDecoder('utf-16le').decode(buf);
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { return new TextDecoder('windows-1252').decode(buf); }
+}
+
+ipcMain.handle('subs:status', async () => {
+  let ready = false;
+  try { ready = !!(await subsFetch('/ready')).data.ready; } catch { /* offline */ }
+  return { ready, user: subsAccount ? subsAccount.user : '', perDay: subsAccount ? subsAccount.perDay : 0 };
+});
+ipcMain.handle('subs:login', guard(async (user, password) => { await subsSignIn(String(user || '').trim(), String(password || '')); return { user: subsAccount.user, perDay: subsAccount.perDay }; }));
+ipcMain.handle('subs:logout', guard(async () => {
+  if (subsAccount && subsAccount.token) await subsFetch('/logout', { method: 'DELETE', auth: true }).catch(() => {});
+  subsAccount = null; saveSubsAccount();
+}));
+ipcMain.handle('subs:search', guard(async (q) => {
+  const p = new URLSearchParams();
+  const add = (k, v) => { if (v !== undefined && v !== null && String(v).trim() !== '') p.set(k, String(v).trim().toLowerCase()); };
+  add('query', q.query); add('languages', q.language); add('season_number', q.season); add('episode_number', q.episode); add('year', q.year);
+  p.set('order_by', 'download_count');
+  p.sort();
+  const r = await subsFetch('/subtitles?' + p.toString());
+  if (r.status === 503) throw new Error('Online subtitle search isn\'t switched on yet. You can still use a subtitle file.');
+  if (r.status !== 200) throw new Error((r.data && r.data.message) || 'The subtitle search didn\'t work. Try again in a minute.');
+  return (r.data.data || []).map((d) => {
+    const a = d.attributes || {}, f = (a.files || [])[0] || {}, fd = a.feature_details || {};
+    return { id: f.file_id, name: a.release || f.file_name || fd.title || 'Subtitles', title: fd.movie_name || fd.title || '', lang: a.language || '', downloads: a.download_count || 0, hi: !!a.hearing_impaired, ai: !!(a.ai_translated || a.machine_translated) };
+  }).filter((x) => x.id).slice(0, 40);
+}));
+ipcMain.handle('subs:download', guard(async (fileId) => {
+  if (!subsAccount) return { needLogin: true };
+  const ask = () => subsFetch('/download', { method: 'POST', auth: true, body: { file_id: Number(fileId), sub_format: 'srt' } });
+  let r = await ask();
+  if (r.status === 401) { await subsSignIn(subsAccount.user, subsAccount.password).catch(() => { subsAccount = null; saveSubsAccount(); }); if (!subsAccount) return { needLogin: true }; r = await ask(); }
+  if (r.status === 406 || r.status === 429) throw new Error((r.data && r.data.message) || 'You\'ve used today\'s subtitle downloads on your OpenSubtitles account. Try again tomorrow.');
+  if (r.status !== 200 || !r.data.link) throw new Error((r.data && r.data.message) || 'That subtitle couldn\'t be fetched. Try another one.');
+  const file = await net.fetch(r.data.link);
+  if (!file.ok) throw new Error('That subtitle couldn\'t be fetched. Try another one.');
+  return { text: decodeText(Buffer.from(await file.arrayBuffer())), remaining: r.data.remaining };
+}));
+ipcMain.handle('subs:pickFile', guard(async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Choose a subtitle file', properties: ['openFile'], filters: [{ name: 'Subtitles', extensions: ['srt', 'vtt', 'ass', 'ssa', 'sub', 'txt'] }] });
+  if (r.canceled || !r.filePaths[0]) return null;
+  const stat = await fs.promises.stat(r.filePaths[0]);
+  if (stat.size > 5 * 1024 * 1024) throw new Error('That file is too big to be a subtitle file.');
+  return { name: path.basename(r.filePaths[0]), text: decodeText(await fs.promises.readFile(r.filePaths[0])) };
+}));
+
 // ---- Updates ---------------------------------------------------------------------------------
 
 let updater = null;
@@ -229,6 +326,7 @@ ipcMain.handle('update:install', () => { if (updater) updater.quitAndInstall(fal
 app.whenReady().then(() => {
   allowStreamCors();
   setupDownloads();
+  loadSubsAccount();
   createWindow();
   setupUpdates();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
