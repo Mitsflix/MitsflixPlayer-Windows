@@ -58,7 +58,7 @@ jobs:
           ls -la dist
           gh release create "v$VERSION" dist/MitsflixPlayer-Setup.exe dist/MitsflixPlayer-Setup.exe.blockmap dist/latest.yml \
             --target "$GITHUB_SHA" --title "Mitsflix Player for Windows $VERSION" \
-            --notes "Download **MitsflixPlayer-Setup.exe** below. Already installed? The app updates itself."
+            --notes "$( [ -f "notes/v$VERSION.md" ] && cat "notes/v$VERSION.md" )"
 
       - name: Announce in Discord
         if: steps.v.outputs.publish == 'always'

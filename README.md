@@ -47,5 +47,5 @@ New to Mitsflix? Get your playlist at **[mitsflix.com](https://mitsflix.com)**.
 
 <details><summary><sub>Releasing an update (maintainers)</sub></summary>
 
-Raise `version` in `package.json` and push to `main`. GitHub Actions builds the installer and publishes it as a release; installed copies update themselves.
+Raise `version` in `package.json`, write what's new for customers in `notes/v<version>.md`, and push to `main`. The notes appear on the release and in the Discord app-updates post. GitHub Actions builds the installer and publishes it as a release; installed copies update themselves.
 </details>
