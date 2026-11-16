@@ -1,9 +1,16 @@
 // Mitsflix Player for Windows — main process.
 // Owns the window, network requests for playlist data (no CORS limits here), a small disk cache,
 // and automatic updates from GitHub releases.
-const { app, BrowserWindow, ipcMain, shell, session, net } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, session, net, protocol, dialog, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { Readable } = require('stream');
+const { Downloads } = require('./downloads');
+
+// Downloaded films and recordings play from disk through this address (mxfile://play/<id>.<ext>).
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'mxfile', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } },
+]);
 
 const SITE = 'https://mitsflix.com';
 let win = null;
@@ -40,6 +47,8 @@ function createWindow() {
     },
   });
   win.once('ready-to-show', () => win.show());
+  // A reloaded page isn't watching anything, so nothing should be holding downloads back.
+  win.webContents.on('did-start-loading', () => { if (downloads) downloads.resetHold(); });
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
 
   // Links never open inside the app.
@@ -117,6 +126,80 @@ ipcMain.handle('win:fullscreen', (_e, on) => {
   return win.isFullScreen();
 });
 
+// ---- Downloads and recordings ---------------------------------------------------------------
+
+let downloads = null;
+let awake = null; // keeps Windows from sleeping mid-download or mid-recording
+
+function setupDownloads() {
+  downloads = new Downloads({
+    dataFile: path.join(app.getPath('userData'), 'downloads.json'),
+    defaultDir: path.join(app.getPath('videos'), 'Mitsflix Player'),
+    userAgent: 'MitsflixPlayer/' + app.getVersion(),
+    notify: (snap) => { if (win && !win.isDestroyed()) win.webContents.send('dl:update', snap); },
+    onBusy: (busy) => {
+      if (busy && awake == null) awake = powerSaveBlocker.start('prevent-app-suspension');
+      else if (!busy && awake != null) { powerSaveBlocker.stop(awake); awake = null; }
+    },
+  });
+
+  const TYPES = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', mkv: 'video/x-matroska', webm: 'video/webm', avi: 'video/x-msvideo', ts: 'video/mp2t', flv: 'video/x-flv' };
+  const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges', 'Cache-Control': 'no-store' };
+  protocol.handle('mxfile', async (request) => {
+    try {
+      if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+      const u = new URL(request.url);
+      const m = /^\/([a-f0-9]{16})\.([a-z0-9]+)$/i.exec(u.pathname);
+      const item = m && u.hostname === 'play' ? downloads.get(m[1]) : null;
+      if (!item) return new Response('Not found', { status: 404, headers: cors });
+      if (m[2].toLowerCase() === 'm3u8') {
+        const text = await downloads.playlist(item.id, 3);
+        if (!text) return new Response('Not found', { status: 404, headers: cors });
+        return new Response(text, { status: 200, headers: { ...cors, 'Content-Type': 'application/vnd.apple.mpegurl' } });
+      }
+      if (item.status !== 'done' && item.status !== 'recording') return new Response('Not ready', { status: 404, headers: cors });
+      const size = (await fs.promises.stat(item.file)).size;
+      const type = TYPES[item.ext] || 'application/octet-stream';
+      const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('range') || '');
+      if (!range || (range[1] === '' && range[2] === '')) {
+        return new Response(Readable.toWeb(fs.createReadStream(item.file)), { status: 200, headers: { ...cors, 'Content-Type': type, 'Content-Length': String(size), 'Accept-Ranges': 'bytes' } });
+      }
+      let start = range[1] === '' ? Math.max(0, size - Number(range[2])) : Number(range[1]);
+      let end = range[1] === '' || range[2] === '' ? size - 1 : Math.min(Number(range[2]), size - 1);
+      if (start >= size || start > end) return new Response(null, { status: 416, headers: { ...cors, 'Content-Range': 'bytes */' + size } });
+      return new Response(Readable.toWeb(fs.createReadStream(item.file, { start, end })), {
+        status: 206,
+        headers: { ...cors, 'Content-Type': type, 'Content-Length': String(end - start + 1), 'Content-Range': 'bytes ' + start + '-' + end + '/' + size, 'Accept-Ranges': 'bytes' },
+      });
+    } catch (err) {
+      return new Response(String((err && err.message) || err), { status: 500, headers: cors });
+    }
+  });
+}
+
+const guard = (fn) => async (_e, ...args) => {
+  try { return { ok: true, value: await fn(...args) }; } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+};
+ipcMain.handle('dl:list', () => downloads.snapshot());
+ipcMain.handle('dl:add', guard((spec) => downloads.add(spec)));
+ipcMain.handle('dl:record', guard((spec) => downloads.record(spec)));
+ipcMain.handle('dl:pause', guard((id) => downloads.pause(id)));
+ipcMain.handle('dl:resume', guard((id) => downloads.resume(id)));
+ipcMain.handle('dl:remove', guard((id) => downloads.remove(id)));
+ipcMain.handle('dl:stopRecording', guard((id) => downloads.stopRecording(id)));
+ipcMain.handle('dl:hold', (_e, delta) => { downloads.setHold(delta > 0 ? 1 : -1); });
+ipcMain.handle('dl:show', (_e, id) => {
+  const item = downloads.get(id);
+  if (item && fs.existsSync(item.file)) shell.showItemInFolder(item.file);
+  else shell.openPath(downloads.dir);
+});
+ipcMain.handle('dl:openFolder', async () => { await fs.promises.mkdir(downloads.dir, { recursive: true }).catch(() => {}); shell.openPath(downloads.dir); });
+ipcMain.handle('dl:chooseFolder', async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Where should downloads and recordings be saved?', defaultPath: downloads.dir, properties: ['openDirectory', 'createDirectory'] });
+  if (r.canceled || !r.filePaths[0]) return downloads.dir;
+  return downloads.setDir(r.filePaths[0]);
+});
+
 // ---- Updates ---------------------------------------------------------------------------------
 
 let updater = null;
@@ -145,8 +228,18 @@ ipcMain.handle('update:install', () => { if (updater) updater.quitAndInstall(fal
 
 app.whenReady().then(() => {
   allowStreamCors();
+  setupDownloads();
   createWindow();
   setupUpdates();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+
+// Closing the app stops cleanly: a recording keeps what it captured, a download resumes next time.
+let closing = false;
+app.on('before-quit', (e) => {
+  if (closing || !downloads) return;
+  closing = true;
+  e.preventDefault();
+  Promise.race([downloads.shutdown(), new Promise((r) => setTimeout(r, 4000))]).finally(() => app.quit());
+});

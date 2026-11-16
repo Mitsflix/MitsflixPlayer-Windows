@@ -274,3 +274,33 @@ img { display: block; }
 .toast { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%); z-index: 80; background: #1f1a12; border: 1px solid var(--gold-deep);
   padding: 12px 18px; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.6); max-width: 70vw; }
 .toast button { margin-left: 12px; }
+
+/* ---- Downloads and recordings ---- */
+.rail-btn { position: relative; }
+.rail-dot { position: absolute; top: 7px; right: 16px; width: 8px; height: 8px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 2px var(--bg-2); }
+.rail-dot.rec { background: var(--danger); animation: rec-pulse 1.6s ease-in-out infinite; }
+@keyframes rec-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .rail-dot.rec, .item.dl.live .thumb::after { animation: none; } }
+.dl-btn.done { color: var(--gold); border-color: rgba(242,181,62,.45); }
+.rec-btn .ico { display: inline-flex; }
+.rec-btn svg, .rec-prog svg, .pbtn.text.recording svg { fill: var(--danger); }
+.rec-btn.recording { border-color: rgba(255,107,90,.55); color: #ffd2cb; }
+.epg .prog .what { display: flex; align-items: center; gap: 10px; }
+.rec-prog { margin-left: auto; flex: none; padding: 4px 10px; font-size: 12px; }
+.rec-prog svg { width: 12px; height: 12px; }
+.ep .dl-btn { margin-left: auto; flex: none; }
+.seasons { display: flex; align-items: center; }
+.form .hint { margin: 0; font-size: 13px; color: var(--dim); }
+.dl-folder { color: var(--dim); font-size: 13px; margin: -8px 0 16px; overflow-wrap: anywhere; }
+.dl-list { margin-top: 16px; max-width: 1100px; }
+.item.dl { align-items: center; }
+.item.dl .thumb { width: 54px; height: 78px; flex: none; border-radius: 8px; background: #0f0c08 center/cover no-repeat; position: relative; }
+.item.dl .thumb.logo { width: 78px; height: 54px; background-size: contain; background-color: #0f0c08; }
+.item.dl.live .thumb::after { content: ""; position: absolute; top: 6px; right: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--danger); animation: rec-pulse 1.6s ease-in-out infinite; }
+.item.dl .t, .item.dl .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item.dl .sub { color: var(--muted); font-size: 13px; }
+.item.dl .s { color: var(--dim); margin-top: 2px; }
+.item.dl.err .s { color: #ffb4a8; }
+.item.dl .pb { height: 4px; background: #2a2418; border-radius: 4px; margin-top: 8px; overflow: hidden; max-width: 520px; }
+.item.dl .pb i { display: block; height: 100%; background: var(--gold); transition: width .4s linear; }
+.item.dl .actions { flex-wrap: nowrap; flex: none; }

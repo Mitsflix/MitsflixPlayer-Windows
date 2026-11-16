@@ -10,6 +10,10 @@ const bridge = window.mitsflix || {
   cacheGet: async () => null, cacheSet: async () => true, cacheClear: async () => true,
   open: async (u) => window.open(u, '_blank'), info: async () => ({ version: 'dev', site: 'https://mitsflix.com' }),
   fullscreen: async () => false, checkUpdate: async () => ({ state: 'dev' }), installUpdate: async () => {}, onUpdate: () => {},
+  downloads: async () => ({ items: [], dir: '', holding: false }), dlAdd: async () => ({ ok: false, error: 'Downloads need the installed app.' }),
+  dlRecord: async () => ({ ok: false, error: 'Recording needs the installed app.' }), dlPause: async () => ({}), dlResume: async () => ({}),
+  dlRemove: async () => ({}), dlStopRecording: async () => ({}), dlHold: async () => {}, dlShow: async () => {}, dlOpenFolder: async () => {},
+  dlChooseFolder: async () => '', onDownloads: () => {},
 };
 
 const SITE = 'https://mitsflix.com';
@@ -45,6 +49,8 @@ const ICON = {
   cc: '<path d="M3 5h18v14H3zm2 2v10h14V7zm2 3h4v1.5H8.5v1H11V14H7zm6 0h4v1.5h-2.5v1H17V14h-4z"/>',
   up: '<path d="M12 6l7 8H5z"/>', down: '<path d="M12 18l-7-8h14z"/>',
   backArrow: '<path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z"/>',
+  download: '<path d="M11 4h2v8.2l3.3-3.3 1.4 1.4L12 16l-5.7-5.7 1.4-1.4 3.3 3.3zM5 18h14v2H5z"/>',
+  rec: '<circle cx="12" cy="12" r="6"/>', stop: '<path d="M7 7h10v10H7z"/>',
   heart: '<path d="M12 21s-7.5-4.6-9.6-9.4A5.3 5.3 0 0 1 12 5.6a5.3 5.3 0 0 1 9.6 6C19.5 16.4 12 21 12 21z"/>',
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -70,7 +76,7 @@ function toast(msg, action) {
   if (action) el.append(h('button', { class: 'btn small gold', onclick: () => { el.hidden = true; action.run(); } }, action.label));
   el.hidden = false;
   clearTimeout(toastTimer);
-  if (!action) toastTimer = setTimeout(() => { el.hidden = true; }, 3500);
+  if (!action || action.brief) toastTimer = setTimeout(() => { el.hidden = true; }, action ? 7000 : 3500);
 }
 
 // Small persistent store (per-viewer conveniences only; the playlist data itself lives in the disk cache).
@@ -258,16 +264,17 @@ function render() {
   if (!pl) { $('#rail').style.visibility = 'hidden'; view.replaceChildren(welcome()); return; }
   $('#rail').style.visibility = '';
   if (state.loading) { view.replaceChildren(h('div', { class: 'loading' }, h('div', { class: 'spinner' }), h('div', null, 'Loading ' + pl.name + '…'), h('div', { style: { fontSize: '13px', color: 'var(--dim)' } }, 'Big playlists can take up to a minute the first time.'))); return; }
-  if (!state.catalog && state.view !== 'settings') {
+  if (!state.catalog && state.view !== 'settings' && state.view !== 'downloads') {
     view.replaceChildren(h('div', { class: 'loading' },
       h('div', { style: { fontSize: '18px', color: 'var(--text)', fontWeight: 600 } }, 'Couldn\'t load ' + pl.name),
       h('div', null, state.loadError || 'Something went wrong.'),
       h('div', { class: 'actions' },
         h('button', { class: 'btn gold', onclick: async () => { await loadCatalog(true); render(); } }, 'Try again'),
+        h('button', { class: 'btn', onclick: () => go('downloads') }, 'Watch downloads'),
         h('button', { class: 'btn', onclick: () => go('settings') }, 'Playlist settings'))));
     return;
   }
-  const views = { home: viewHome, search: viewSearch, live: viewLive, movies: viewMovies, series: viewSeries, favourites: viewFavourites, settings: viewSettings };
+  const views = { home: viewHome, search: viewSearch, live: viewLive, movies: viewMovies, series: viewSeries, favourites: viewFavourites, downloads: viewDownloads, settings: viewSettings };
   view.replaceChildren((views[state.view] || viewHome)());
 }
 
@@ -574,7 +581,7 @@ function showChannel(pane, ch, list, keepPlaying) {
   const favBtn = h('button', { class: 'btn' }, isFav('live', ch.id) ? '♥ Favourite' : '♡ Add to favourites');
   favBtn.onclick = () => { const on = toggleFav('live', ch.id); favBtn.textContent = on ? '♥ Favourite' : '♡ Add to favourites'; };
   pane.replaceChildren(screen,
-    h('div', { class: 'actions' }, h('button', { class: 'btn gold', onclick: () => playLive(ch, list) }, 'Full screen'), favBtn), epg);
+    h('div', { class: 'actions' }, h('button', { class: 'btn gold', onclick: () => playLive(ch, list) }, 'Full screen'), recordButton(ch), favBtn), epg);
   stopPreview();
   pushRecent(ch.id);
   video.addEventListener('playing', () => msg.replaceChildren());
@@ -587,7 +594,9 @@ function showChannel(pane, ch, list, keepPlaying) {
       const on = p.start <= now && now < p.stop;
       epg.append(h('div', { class: 'prog' },
         h('div', { class: 'when' }, (on ? 'NOW · ' : i === 1 ? 'NEXT · ' : '') + clock(p.start) + ' – ' + clock(p.stop)),
-        h('div', { class: 'what' }, p.title), p.desc ? h('div', { class: 'desc' }, p.desc) : null,
+        h('div', { class: 'what' }, p.title, h('button', { class: 'btn small rec-prog', title: on ? 'Record the rest of this programme' : 'Record this programme when it starts',
+          onclick: () => startRecording(ch, { programme: p.title, startAt: on ? 0 : p.start * 1000, endAt: p.stop * 1000 + 120000 }) }, svg(ICON.rec), 'Record')),
+        p.desc ? h('div', { class: 'desc' }, p.desc) : null,
         on ? h('div', { class: 'pb' }, h('i', { style: { width: ((now - p.start) / (p.stop - p.start) * 100) + '%' } })) : null));
     });
   });
@@ -609,6 +618,9 @@ async function loadEpg(ch) {
 }
 
 function liveSources(pl, ch) {
+  // A channel that's being recorded plays from the recording, so it doesn't need a second connection.
+  const rec = dlRecording();
+  if (rec && rec.plId === pl.id && rec.channelId === String(ch.id)) return [localUrl(rec, 'm3u8')];
   if (pl.type === 'm3u') return [ch.url];
   return [xtUrl(pl, 'live', ch.id, 'm3u8'), xtUrl(pl, 'live', ch.id, 'ts')];
 }
@@ -619,7 +631,7 @@ function playLive(ch, list) {
   pushRecent(ch.id);
   const idx = list.findIndex((x) => x.id === ch.id);
   openPlayer({
-    kind: 'live', title: ch.name, sources: liveSources(pl, ch), channelId: ch.id,
+    kind: 'live', title: ch.name, sources: liveSources(pl, ch), channelId: ch.id, liveRef: { ch, list },
     sub: '', onEpg: () => loadEpg(ch),
     prev: idx > 0 ? () => playLive(list[idx - 1], list) : null,
     next: idx >= 0 && idx < list.length - 1 ? () => playLive(list[idx + 1], list) : null,
@@ -669,6 +681,7 @@ async function openMovieDetail(m) {
       h('div', { class: 'actions' },
         h('button', { class: 'btn gold', onclick: () => { close(); playMovie(m, resumable ? prog.pos : 0); } }, svg(ICON.play), resumable ? 'Resume ' + fmtTime(prog.pos) : 'Play'),
         resumable ? h('button', { class: 'btn', onclick: () => { close(); playMovie(m, 0); } }, 'Start over') : null,
+        downloadButton('m:' + m.id, () => movieSpec(m)),
         favBtn,
         info.trailer ? h('button', { class: 'btn', onclick: () => bridge.open('https://www.youtube.com/watch?v=' + encodeURIComponent(info.trailer)) }, 'Trailer') : null),
       info.plot ? h('p', { class: 'plot' }, info.plot) : h('p', { class: 'plot', style: { color: 'var(--dim)' } }, info.loading ? 'Loading details…' : 'No description available.'),
@@ -696,7 +709,7 @@ function playMovie(m, startAt) {
   if (startAt === undefined) startAt = saved && saved.dur && saved.pos / saved.dur < 0.95 ? saved.pos : 0;
   openPlayer({
     kind: 'vod', title: m.name, sub: m.year || '',
-    sources: [pl.type === 'm3u' ? m.url : xtUrl(pl, 'movie', m.id, m.ext || 'mp4')],
+    sources: [localCopy('m:' + m.id) || (pl.type === 'm3u' ? m.url : xtUrl(pl, 'movie', m.id, m.ext || 'mp4'))],
     startAt, progressKey: key, progressMeta: { name: m.name, poster: m.poster },
     onClose: () => { if (state.view === 'movies' || state.view === 'home') render(); },
   });
@@ -770,7 +783,13 @@ function seriesPage(s) {
     if (!seasons.length) { eps.replaceChildren(h('div', { class: 'empty-note' }, 'No episodes yet.')); return; }
     if (!st.season || !seasons.includes(st.season)) st.season = lastKey ? String((all.find((e) => 'e:' + e.id === lastKey[0]) || {}).season || seasons[0]) : seasons[0];
     const drawSeason = () => {
-      seasonsBar.replaceChildren(h('div', { class: 'tabs' }, ...seasons.map((sn) => h('button', { class: 'tab' + (sn === st.season ? ' active' : ''), onclick: () => { st.season = sn; drawSeason(); } }, 'Season ' + sn))));
+      seasonsBar.replaceChildren(h('div', { class: 'tabs' }, ...seasons.map((sn) => h('button', { class: 'tab' + (sn === st.season ? ' active' : ''), onclick: () => { st.season = sn; drawSeason(); } }, 'Season ' + sn))),
+        h('button', { class: 'btn small', style: { marginLeft: '12px' }, onclick: async () => {
+          const list = (bySeason[st.season] || []).filter((e) => !dlFind('e:' + e.id));
+          if (!list.length) { toast('This season is already in Downloads.'); return; }
+          for (const e of list) await bridge.dlAdd(episodeSpec(s, { ...e, season: Number(st.season) }));
+          toast(list.length + (list.length === 1 ? ' episode' : ' episodes') + ' added to Downloads.');
+        } }, svg(ICON.download), 'Download season'));
       eps.replaceChildren(...(bySeason[st.season] || []).map((e) => {
         const ep = { ...e, season: Number(st.season) };
         const pr = progress()['e:' + e.id];
@@ -781,7 +800,8 @@ function seriesPage(s) {
           h('div', { style: { minWidth: 0 } },
             h('div', { class: 't' }, (e.episode_num ? e.episode_num + '. ' : '') + (e.title || 'Episode')),
             h('div', { class: 's' }, [ei.duration ? String(ei.duration).replace(/^00:/, '') : '', ei.releasedate || ei.air_date || ''].filter(Boolean).join(' · ')),
-            ei.plot ? h('div', { class: 'd' }, ei.plot) : null));
+            ei.plot ? h('div', { class: 'd' }, ei.plot) : null),
+          downloadButton('e:' + e.id, () => episodeSpec(s, ep), true));
       }));
     };
     drawSeason();
@@ -799,7 +819,7 @@ function playEpisode(s, ep, all) {
   const label = 'S' + ep.season + ' E' + (ep.episode_num || '') + (ep.title ? ' · ' + ep.title : '');
   openPlayer({
     kind: 'vod', title: s.name, sub: label,
-    sources: [xtUrl(pl, 'series', ep.id, ep.container_extension || 'mp4')],
+    sources: [localCopy('e:' + ep.id) || xtUrl(pl, 'series', ep.id, ep.container_extension || 'mp4')],
     startAt, progressKey: key, progressMeta: { seriesId: s.id, name: s.name, label: s.name + ' · S' + ep.season + 'E' + (ep.episode_num || ''), poster: s.poster },
     next: nextEp ? () => playEpisode(s, nextEp, all) : null,
     nextLabel: nextEp ? 'Next: S' + nextEp.season + ' E' + (nextEp.episode_num || '') : '',
@@ -923,6 +943,15 @@ let activeStream = null;  // only one stream at a time (most playlists allow one
 
 function attachStream(video, sources, { live, onFatal, onReady } = {}) {
   let hls = null, mp = null, idx = 0, dead = false, mediaRecovered = false;
+  const remote = !/^mxfile:/i.test(sources[0] || '');
+  const busy = remote ? dlRecording() : null;
+  if (busy) {
+    // One connection per playlist: while it's recording, nothing else can stream.
+    setTimeout(() => onFatal && onFatal('Recording ' + busy.title + ' is using your playlist\'s one connection. You can watch that channel, or anything in Downloads. Stop the recording to watch something else.'), 0);
+    return { destroy() {}, get hls() { return null; } };
+  }
+  let held = false;
+  if (remote) { held = true; bridge.dlHold(1); }
   const cleanup = () => {
     if (hls) { try { hls.destroy(); } catch { /* ignore */ } hls = null; }
     if (mp) { try { mp.pause(); mp.unload(); mp.detachMediaElement(); mp.destroy(); } catch { /* ignore */ } mp = null; }
@@ -962,9 +991,278 @@ function attachStream(video, sources, { live, onFatal, onReady } = {}) {
   video.addEventListener('error', onErr);
   if (activeStream && activeStream !== preview) activeStream.destroy();
   start();
-  const handle = { destroy() { dead = true; video.removeEventListener('error', onErr); cleanup(); if (activeStream === handle) activeStream = null; }, get hls() { return hls; } };
+  const handle = { destroy() { dead = true; video.removeEventListener('error', onErr); cleanup(); if (held) { held = false; bridge.dlHold(-1); } if (activeStream === handle) activeStream = null; }, get hls() { return hls; } };
   activeStream = handle;
   return handle;
+}
+
+// ============================================================================ Downloads & recordings
+
+// Mirror of the main process's list (downloads.js). It pushes a fresh copy whenever anything changes.
+const dl = { items: [], dir: '', holding: false, tab: 'downloads' };
+const dlListeners = new Set();
+const dlKey = (k) => (active() ? active().id : '') + ':' + k;
+const dlFind = (k) => dl.items.find((x) => x.key === dlKey(k));
+const dlRecording = () => dl.items.find((x) => x.status === 'recording') || null;
+const localUrl = (it, ext) => 'mxfile://play/' + it.id + '.' + (ext || it.ext);
+const localCopy = (k) => { const it = dlFind(k); return it && it.status === 'done' ? localUrl(it) : null; };
+function fmtBytes(n) {
+  if (!n) return '0 MB';
+  return n >= 1073741824 ? (n / 1073741824).toFixed(n >= 10737418240 ? 0 : 1) + ' GB' : Math.max(1, Math.round(n / 1048576)) + ' MB';
+}
+const pctOf = (it) => (it.total ? Math.min(100, Math.floor(it.bytes / it.total * 100)) : 0);
+const dayTime = (ms) => new Date(ms).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+function fmtLength(ms) {
+  const m = Math.round(ms / 60000);
+  return m < 60 ? m + ' min' : (m % 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : (m / 60) + (m === 60 ? ' hour' : ' hours'));
+}
+
+// Runs fn on every change for as long as el is on screen.
+function watchDl(el, fn) {
+  let seen = false;
+  const listener = () => {
+    if (el.isConnected) seen = true;
+    else if (seen) { dlListeners.delete(listener); return; }
+    fn();
+  };
+  dlListeners.add(listener);
+}
+
+function onDownloads(snap) {
+  if (!snap) return;
+  const was = dlRecording();
+  const before = new Map(dl.items.map((x) => [x.id, x.status]));
+  dl.items = snap.items || []; dl.dir = snap.dir || ''; dl.holding = !!snap.holding;
+  const now = dlRecording();
+  for (const it of dl.items) {
+    const prev = before.get(it.id);
+    if (!prev || prev === it.status) continue;
+    if (it.status === 'done') toast((it.kind === 'recording' ? 'Recording saved: ' : 'Downloaded: ') + it.title + (it.sub ? ' · ' + it.sub : ''), { label: 'Open Downloads', brief: true, run: () => { dl.tab = it.kind === 'recording' ? 'recordings' : 'downloads'; go('downloads'); } });
+    else if (it.status === 'error' && prev !== 'scheduled') toast((it.kind === 'recording' ? 'Recording failed: ' : 'Download failed: ') + it.title);
+  }
+  const dot = $('#dl-dot');
+  if (dot) { dot.hidden = !now && !dl.items.some((x) => x.status === 'downloading'); dot.classList.toggle('rec', !!now); }
+  if ((now && now.id) !== (was && was.id)) recordingChanged(now, was);
+  dlListeners.forEach((fn) => fn());
+}
+
+// A recording starting or stopping changes where a channel plays from, and what else may stream.
+function recordingChanged(now, was) {
+  const target = now || was, pl = active();
+  const live = playerSession && playerSession.live;
+  if (live) {
+    const same = pl && target.plId === pl.id && target.channelId === String(live.ch.id);
+    if (same) { playerSession.close(true); playLive(live.ch, live.list); }
+    else if (now) { playerSession.close(); toast('Recording ' + now.title + ' has started. It\'s using your connection until it finishes.'); }
+  } else if (now && playerSession && !playerSession.local) {
+    playerSession.close();
+    toast('Recording ' + now.title + ' has started. It\'s using your connection until it finishes.');
+  }
+  if (state.view === 'live' && !playerSession) { stopPreview(); render(); }
+}
+
+async function dlCall(promise, okMsg) {
+  const r = await promise;
+  if (r && r.ok === false) { toast(r.error || 'That didn\'t work. Try again.'); return false; }
+  if (okMsg) toast(okMsg);
+  return true;
+}
+
+function movieSpec(m) {
+  const pl = active();
+  const ext = pl.type === 'm3u' ? ((String(m.url).split('?')[0].match(/\.([a-z0-9]{2,4})$/i) || [])[1] || 'mp4') : (m.ext || 'mp4');
+  return { key: dlKey('m:' + m.id), kind: 'movie', title: m.name, sub: m.year || '', poster: m.poster || '',
+    url: pl.type === 'm3u' ? m.url : xtUrl(pl, 'movie', m.id, ext), ext,
+    fileName: m.name + (m.year && !String(m.name).includes(m.year) ? ' (' + m.year + ')' : ''),
+    progressKey: 'm:' + m.id, meta: { name: m.name, poster: m.poster } };
+}
+function episodeSpec(s, ep) {
+  const pl = active(), two = (n) => String(n || 0).padStart(2, '0');
+  const ext = ep.container_extension || 'mp4', code = 'S' + two(ep.season) + 'E' + two(ep.episode_num);
+  return { key: dlKey('e:' + ep.id), kind: 'episode', title: s.name, group: s.name, poster: s.poster || '',
+    sub: 'S' + ep.season + ' E' + (ep.episode_num || '') + (ep.title ? ' · ' + ep.title : ''),
+    url: xtUrl(pl, 'series', ep.id, ext), ext, fileName: s.name + ' ' + code,
+    progressKey: 'e:' + ep.id, meta: { seriesId: s.id, name: s.name, label: s.name + ' · S' + ep.season + 'E' + (ep.episode_num || ''), poster: s.poster } };
+}
+
+// The Download button on a film or an episode. It follows the download's progress.
+function downloadButton(key, makeSpec, small) {
+  const label = h('span');
+  const b = h('button', { class: 'btn dl-btn' + (small ? ' small' : '') }, svg(ICON.download), label);
+  const draw = () => {
+    const it = dlFind(key);
+    b.classList.toggle('done', !!it && it.status === 'done');
+    label.textContent = !it ? 'Download'
+      : it.status === 'done' ? 'Downloaded'
+      : it.status === 'downloading' ? 'Downloading ' + pctOf(it) + '%'
+      : it.status === 'paused' ? 'Paused ' + pctOf(it) + '%'
+      : it.status === 'error' ? 'Try download again' : 'Queued';
+    b.title = !it ? 'Save to this PC to watch without internet' : it.status === 'done' ? 'Saved on this PC. Open Downloads' : 'Open Downloads';
+  };
+  b.onclick = async (e) => {
+    e.stopPropagation();
+    const it = dlFind(key);
+    if (!it) { if (await dlCall(bridge.dlAdd(makeSpec()))) toast(dl.holding ? 'Added to Downloads. It starts when you stop watching.' : 'Added to Downloads.'); }
+    else if (it.status === 'error') dlCall(bridge.dlResume(it.id));
+    else { dl.tab = 'downloads'; document.querySelectorAll('.detail').forEach((d) => d.remove()); go('downloads'); }
+  };
+  draw();
+  watchDl(b, draw);
+  return b;
+}
+
+// Where a channel can be recorded from: recording needs the plain MPEG-TS stream.
+function recordUrl(pl, ch) {
+  if (pl.type === 'xtream') return xtUrl(pl, 'live', ch.id, 'ts');
+  const u = String(ch.url || '');
+  if (!/\.m3u8(\?|$)/i.test(u)) return u;
+  return /\/live\/[^/]+\/[^/]+\/[^/]+\.m3u8/i.test(u) ? u.replace(/\.m3u8(\?|$)/i, '.ts$1') : '';
+}
+async function startRecording(ch, { programme, startAt, endAt }) {
+  const pl = active(), url = recordUrl(pl, ch);
+  if (!url) { toast('This channel\'s stream type can\'t be recorded.'); return false; }
+  const later = startAt && startAt > Date.now() + 5000;
+  return dlCall(bridge.dlRecord({ channelId: ch.id, plId: pl.id, title: ch.name, programme: programme || '', poster: ch.logo || '', url, startAt: later ? startAt : 0, endAt: endAt || 0 }),
+    later ? 'Recording set for ' + dayTime(startAt) + '. Keep Mitsflix Player open.' : '');
+}
+
+function recordButton(ch) {
+  const label = h('span'), icon = h('span', { class: 'ico' });
+  const b = h('button', { class: 'btn rec-btn' }, icon, label);
+  const draw = () => {
+    const rec = dlRecording();
+    b.classList.toggle('recording', !!rec);
+    icon.replaceChildren(svg(rec ? ICON.stop : ICON.rec));
+    const here = rec && active() && rec.plId === active().id && rec.channelId === String(ch.id);
+    label.textContent = !rec ? 'Record' : here ? 'Stop recording' : 'Stop recording ' + rec.title;
+  };
+  b.onclick = () => { const rec = dlRecording(); if (rec) bridge.dlStopRecording(rec.id); else recordModal(ch); };
+  draw();
+  watchDl(b, draw);
+  return b;
+}
+
+function recordModal(ch) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const soon = new Date(Date.now() + 30 * 60000);
+  const when = h('select', { class: 'input' }, h('option', { value: 'now' }, 'Now'), h('option', { value: 'later' }, 'At a set time'));
+  const at = h('input', { class: 'input', type: 'datetime-local', value: soon.getFullYear() + '-' + pad(soon.getMonth() + 1) + '-' + pad(soon.getDate()) + 'T' + pad(soon.getHours()) + ':' + pad(soon.getMinutes()) });
+  const atRow = h('label', { hidden: true }, 'Start time', at);
+  const len = h('select', { class: 'input' }, ...[[30, '30 minutes'], [60, '1 hour'], [90, '1 hour 30 minutes'], [120, '2 hours'], [180, '3 hours'], [240, '4 hours'], [0, 'Until I stop it']].map(([v, t]) => h('option', { value: v, selected: v === 60 }, t)));
+  const err = h('div', { class: 'err' });
+  const go = h('button', { class: 'btn gold' }, 'Start recording');
+  when.onchange = () => { atRow.hidden = when.value !== 'later'; go.textContent = when.value === 'later' ? 'Set recording' : 'Start recording'; };
+  const close = modal('Record ' + ch.name, h('div', { class: 'form' },
+    h('label', null, 'Start', when), atRow, h('label', null, 'Record for', len), err,
+    h('p', { class: 'hint' }, 'Recordings run while Mitsflix Player is open. Your playlist allows one connection, so you can keep watching this channel while it records, but not a different one.'),
+    h('div', { class: 'row-btns' }, h('button', { class: 'btn ghost', onclick: () => close() }, 'Cancel'), go)));
+  go.onclick = async () => {
+    const later = when.value === 'later', mins = Number(len.value);
+    const startAt = later ? new Date(at.value).getTime() : 0;
+    if (later && !(startAt > Date.now())) { err.textContent = 'Pick a start time in the future.'; return; }
+    if (later && !mins) { err.textContent = 'Choose how long to record for.'; return; }
+    const from = later ? startAt : Date.now();
+    if (await startRecording(ch, { startAt, endAt: mins ? from + mins * 60000 : 0 })) close();
+  };
+}
+
+function playDownloaded(it) {
+  if (it.kind === 'recording') {
+    const recording = it.status === 'recording';
+    openPlayer({ kind: recording ? 'live' : 'vod', local: true, title: it.title, sub: it.sub || 'Recorded ' + dayTime(it.startedAt || it.startAt),
+      sources: [localUrl(it, 'm3u8')], progressKey: recording ? null : 'r:' + it.id, progressMeta: {},
+      startAt: recording ? 0 : ((progress()['r:' + it.id] || {}).pos || 0),
+      onClose: () => { if (state.view === 'downloads') render(); } });
+    return;
+  }
+  const saved = it.progressKey ? progress()[it.progressKey] : null;
+  openPlayer({ kind: 'vod', local: true, title: it.title, sub: it.sub || '', sources: [localUrl(it)],
+    startAt: saved && saved.dur && saved.pos / saved.dur < 0.95 ? saved.pos : 0,
+    progressKey: it.progressKey || null, progressMeta: it.meta || {},
+    onClose: () => { if (state.view === 'downloads') render(); } });
+}
+
+function dlStatus(it) {
+  const size = fmtBytes(it.bytes);
+  if (it.status === 'downloading') return it.total ? fmtBytes(it.bytes) + ' of ' + fmtBytes(it.total) + ' · ' + pctOf(it) + '%' : size + ' so far';
+  if (it.status === 'paused') return 'Paused' + (it.total ? ' · ' + pctOf(it) + '%' : '');
+  if (it.status === 'queued') return dl.holding ? 'Waiting until you stop watching' : dlRecording() ? 'Waiting for the recording to finish' : 'Next in line';
+  if (it.status === 'error') return it.error || 'Something went wrong.';
+  if (it.status === 'scheduled') return 'Starts ' + dayTime(it.startAt) + (it.endAt ? ' · ' + fmtLength(it.endAt - it.startAt) : '');
+  if (it.status === 'recording') return 'Recording · ' + fmtTime((Date.now() - (it.startedAt || Date.now())) / 1000) + ' · ' + size + (it.endAt ? ' · until ' + new Date(it.endAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '');
+  if (it.kind === 'recording') return [dayTime(it.startedAt || it.startAt), it.seconds ? fmtLength(it.seconds * 1000) : '', size, it.note || ''].filter(Boolean).join(' · ');
+  return size + ' · Saved on this PC';
+}
+
+function dlRow(it) {
+  const status = h('div', { class: 's' }), fill = h('i'), bar = h('div', { class: 'pb' }, fill);
+  const btns = h('div', { class: 'actions' });
+  const thumb = h('div', { class: 'thumb' + (it.kind === 'recording' ? ' logo' : ''), style: { backgroundImage: it.poster ? 'url("' + String(it.poster).replace(/"/g, '%22') + '")' : '' } });
+  const el = h('div', { class: 'item dl' }, thumb, h('div', { class: 'grow' }, h('div', { class: 't' }, it.title), it.sub ? h('div', { class: 'sub' }, it.sub) : null, status, bar), btns);
+  const btn = (text, fn, cls = '') => h('button', { class: 'btn small ' + cls, onclick: fn }, text);
+  const remove = (word) => {
+    const close = modal(word + ' "' + it.title + (it.sub ? ' · ' + it.sub : '') + '"?', h('div', null,
+      h('p', { style: { color: 'var(--muted)', marginTop: 0 } }, 'The file is deleted from this PC. This can\'t be undone.'),
+      h('div', { class: 'actions', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn ghost', onclick: () => close() }, 'Keep it'),
+        h('button', { class: 'btn danger', onclick: () => { close(); dlCall(bridge.dlRemove(it.id)); } }, 'Delete'))));
+  };
+  let shape = '';
+  const update = (x) => {
+    it = x;
+    status.textContent = dlStatus(x);
+    el.classList.toggle('err', x.status === 'error');
+    el.classList.toggle('live', x.status === 'recording');
+    bar.hidden = !(['downloading', 'paused'].includes(x.status) && x.total);
+    fill.style.width = pctOf(x) + '%';
+    if (shape === x.status) return;
+    shape = x.status;
+    const rec = x.kind === 'recording';
+    btns.replaceChildren(...({
+      done: [btn('Play', () => playDownloaded(it), 'gold'), btn('Show in folder', () => bridge.dlShow(it.id)), btn('Delete', () => remove('Delete'), 'danger')],
+      downloading: [btn('Pause', () => bridge.dlPause(it.id)), btn('Cancel', () => dlCall(bridge.dlRemove(it.id)), 'danger')],
+      queued: [btn('Pause', () => bridge.dlPause(it.id)), btn('Cancel', () => dlCall(bridge.dlRemove(it.id)), 'danger')],
+      paused: [btn('Resume', () => bridge.dlResume(it.id), 'gold'), btn('Cancel', () => dlCall(bridge.dlRemove(it.id)), 'danger')],
+      error: rec ? [btn('Remove', () => dlCall(bridge.dlRemove(it.id)))] : [btn('Try again', () => bridge.dlResume(it.id), 'gold'), btn('Remove', () => dlCall(bridge.dlRemove(it.id)))],
+      scheduled: [btn('Cancel recording', () => bridge.dlStopRecording(it.id), 'danger')],
+      recording: [btn('Watch', () => playDownloaded(it), 'gold'), btn('Stop recording', () => bridge.dlStopRecording(it.id), 'danger')],
+    }[x.status] || []));
+  };
+  update(it);
+  return { el, update };
+}
+
+function viewDownloads() {
+  const page = h('div', { class: 'page' }), list = h('div', { class: 'dl-list' });
+  const folder = h('div', { class: 'sub dl-folder' });
+  const tabs = h('div', { class: 'tabs' });
+  const rows = new Map();
+  let shown = '';
+  const draw = () => {
+    const recs = dl.items.filter((x) => x.kind === 'recording'), vids = dl.items.filter((x) => x.kind !== 'recording');
+    const items = dl.tab === 'recordings' ? recs : vids;
+    folder.textContent = 'Saved in ' + (dl.dir || 'your Videos folder') + ' · ' + fmtBytes(dl.items.filter((x) => x.status === 'done').reduce((a, x) => a + (x.bytes || 0), 0)) + ' used';
+    tabs.replaceChildren(
+      h('button', { class: 'tab' + (dl.tab !== 'recordings' ? ' active' : ''), onclick: () => { dl.tab = 'downloads'; draw(); } }, 'Movies and series' + (vids.length ? ' (' + vids.length + ')' : '')),
+      h('button', { class: 'tab' + (dl.tab === 'recordings' ? ' active' : ''), onclick: () => { dl.tab = 'recordings'; draw(); } }, 'Recordings' + (recs.length ? ' (' + recs.length + ')' : '')));
+    // Rows are kept and updated in place, so a button never disappears from under a click.
+    const order = items.map((x) => x.id).join(',');
+    if (order !== shown) {
+      shown = order;
+      for (const id of [...rows.keys()]) if (!items.some((x) => x.id === id)) rows.delete(id);
+      for (const it of items) if (!rows.has(it.id)) rows.set(it.id, dlRow(it));
+      list.replaceChildren(...(items.length ? items.map((x) => rows.get(x.id).el) : [h('div', { class: 'empty-note' },
+        dl.tab === 'recordings' ? 'No recordings yet. Open a channel in Live TV and choose Record.' : 'Nothing downloaded yet. Open a movie or an episode and choose Download to watch it without internet.')]));
+    }
+    for (const it of items) rows.get(it.id).update(it);
+  };
+  page.append(h('div', { class: 'page-head' }, h('h1', null, 'Downloads'), h('div', { class: 'grow' }),
+    h('button', { class: 'btn small', onclick: () => bridge.dlOpenFolder() }, 'Open folder'),
+    h('button', { class: 'btn small', onclick: async () => { await bridge.dlChooseFolder(); onDownloads(await bridge.downloads()); } }, 'Change folder')),
+  folder, tabs, list);
+  draw();
+  watchDl(page, draw);
+  const clockTick = setInterval(() => { if (!page.isConnected) { clearInterval(clockTick); return; } if (dlRecording()) draw(); }, 1000);
+  return page;
 }
 
 // ============================================================================ Player
@@ -988,6 +1286,10 @@ function openPlayer(opts) {
   const time = h('span', { class: 'time' });
   const ccBtn = pb(ICON.cc, 'Subtitles & audio', () => toggleMenu());
   ccBtn.hidden = true;
+  const recNow = isLive && opts.liveRef ? dlRecording() : null;
+  const recHere = recNow && active() && recNow.plId === active().id && recNow.channelId === String(opts.liveRef.ch.id);
+  const recBtn = isLive && opts.liveRef && (!recNow || recHere) ? h('button', { class: 'pbtn text' + (recHere ? ' recording' : ''), title: recHere ? 'Stop recording' : 'Record this channel until you stop it',
+    onclick: (e) => { e.stopPropagation(); if (recHere) bridge.dlStopRecording(recNow.id); else startRecording(opts.liveRef.ch, {}); } }, svg(recHere ? ICON.stop : ICON.rec), recHere ? ' Stop recording' : ' Record') : null;
   const nextBtn = opts.next ? h('button', { class: 'pbtn text', onclick: (e) => { e.stopPropagation(); goNext(); } }, svg(ICON.next), ' ', opts.nextLabel || 'Next') : null;
 
   // Seek bar (films and episodes)
@@ -1019,7 +1321,7 @@ function openPlayer(opts) {
     isLive ? null : time,
     h('div', { class: 'grow' }),
     !isLive ? nextBtn : null,
-    ccBtn, muteBtn, vol, fullBtn);
+    recBtn, ccBtn, muteBtn, vol, fullBtn);
   const bottom = h('div', { class: 'bottom', onclick: (e) => e.stopPropagation(), ondblclick: (e) => e.stopPropagation() }, isLive ? null : seek, bar);
   top.addEventListener('click', (e) => e.stopPropagation());
   const menu = h('div', { class: 'menu', hidden: true, onclick: (e) => e.stopPropagation() });
@@ -1124,13 +1426,15 @@ function openPlayer(opts) {
     playerSession = null;
     if (!switching) { await bridge.fullscreen(false); if (opts.onClose) opts.onClose(); }
   };
-  playerSession = { close, video };
+  playerSession = { close, video, live: opts.liveRef || null, local: /^mxfile:/i.test(opts.sources[0] || '') };
 }
 
 // ============================================================================ start
 
 (async function start() {
   if (state.playlists.length && !active()) { state.activeId = state.playlists[0].id; savePlaylists(); }
+  bridge.onDownloads(onDownloads);
+  bridge.downloads().then(onDownloads).catch(() => {});
   render();
   if (active()) { await loadCatalog(); render(); }
 })();
