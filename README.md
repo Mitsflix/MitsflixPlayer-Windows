@@ -5,7 +5,7 @@
 <p align="center">Live TV, movies and series from any IPTV playlist — on your Windows or Linux PC or laptop.</p>
 
 <p align="center">
-  <a href="https://github.com/Mitsflix/MitsflixPlayer-Windows/releases/latest/download/MitsflixPlayer-Setup.exe"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-E3A72F?style=for-the-badge&logo=windows&logoColor=white"></a>
+  <a href="https://mitsflix.com/windows"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-E3A72F?style=for-the-badge&logo=windows&logoColor=white"></a>
   <a href="https://mitsflix.com"><img alt="Get a playlist" src="https://img.shields.io/badge/Get%20a%20playlist-mitsflix.com-E3A72F?style=for-the-badge"></a>
 </p>
 
@@ -13,7 +13,7 @@
 
 ## 📥 Install
 
-1. Download **[MitsflixPlayer-Setup.exe](https://github.com/Mitsflix/MitsflixPlayer-Windows/releases/latest/download/MitsflixPlayer-Setup.exe)**
+1. Download **[MitsflixPlayer-Setup.exe](https://mitsflix.com/windows)**
 2. Open it. If Windows shows **"Windows protected your PC"**, click **More info → Run anyway**
 3. Add your playlist and start watching
 
@@ -23,8 +23,8 @@ On a TV box or Fire Stick? Use the Android version: Downloader code **6284643**.
 
 ### Linux
 
-- **Ubuntu, Debian, Mint:** download **[MitsflixPlayer.deb](https://github.com/Mitsflix/MitsflixPlayer-Windows/releases/latest/download/MitsflixPlayer.deb)** and open it, or run `sudo apt install ./MitsflixPlayer.deb`
-- **Other Linux systems:** download **[MitsflixPlayer.AppImage](https://github.com/Mitsflix/MitsflixPlayer-Windows/releases/latest/download/MitsflixPlayer.AppImage)**, make it executable (`chmod +x MitsflixPlayer.AppImage`) and open it. The AppImage updates itself.
+- **Ubuntu, Debian, Mint:** download **[MitsflixPlayer.deb](https://mitsflix.com/linux)** and open it, or run `sudo apt install ./MitsflixPlayer.deb`
+- **Other Linux systems:** download **[MitsflixPlayer.AppImage](https://mitsflix.com/linux-appimage)**, make it executable (`chmod +x MitsflixPlayer.AppImage`) and open it. The AppImage updates itself.
 
 ## ✨ Features
 
