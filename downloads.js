@@ -1,4 +1,4 @@
-// Mitsflix Player for Windows — downloads and live TV recordings.
+// Mitsflix Player for Windows and Linux — downloads and live TV recordings.
 // Plain Node (no Electron imports) so it can be tested on its own. main.js wires it to the window.
 //
 // Downloads: one at a time (most playlists allow a single connection), saved as <file>.part and
@@ -34,7 +34,7 @@ function statusText(code) {
 function friendly(err) {
   const code = err && err.code;
   if (code === 'ENOSPC') return 'The disk is full. Free up some space and try again.';
-  if (code === 'EACCES' || code === 'EPERM') return 'Windows wouldn\'t let the app write to the downloads folder. Choose another folder in Downloads.';
+  if (code === 'EACCES' || code === 'EPERM') return 'The app isn\'t allowed to write to the downloads folder. Choose another folder in Downloads.';
   if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'No internet connection, or the server address can\'t be found.';
   if (code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'ETIMEDOUT') return 'The connection to the server dropped.';
   return String((err && err.message) || err || 'Something went wrong.');

@@ -1,8 +1,8 @@
 <p align="center"><img src="src/assets/wordmark.png" alt="Mitsflix" width="420"></p>
 
-<h1 align="center">Mitsflix Player for Windows</h1>
+<h1 align="center">Mitsflix Player for Windows and Linux</h1>
 
-<p align="center">Live TV, movies and series from any IPTV playlist — on your Windows PC or laptop.</p>
+<p align="center">Live TV, movies and series from any IPTV playlist — on your Windows or Linux PC or laptop.</p>
 
 <p align="center">
   <a href="https://github.com/Mitsflix/MitsflixPlayer-Windows/releases/latest/download/MitsflixPlayer-Setup.exe"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-E3A72F?style=for-the-badge&logo=windows&logoColor=white"></a>
@@ -20,6 +20,11 @@
 Works on Windows 10 and 11 (64-bit). The app updates itself when a new version is out.
 
 On a TV box or Fire Stick? Use the Android version: Downloader code **6284643**.
+
+### Linux
+
+- **Ubuntu, Debian, Mint:** download **[MitsflixPlayer.deb](https://github.com/Mitsflix/MitsflixPlayer-Windows/releases/latest/download/MitsflixPlayer.deb)** and open it, or run `sudo apt install ./MitsflixPlayer.deb`
+- **Other Linux systems:** download **[MitsflixPlayer.AppImage](https://github.com/Mitsflix/MitsflixPlayer-Windows/releases/latest/download/MitsflixPlayer.AppImage)**, make it executable (`chmod +x MitsflixPlayer.AppImage`) and open it. The AppImage updates itself.
 
 ## ✨ Features
 

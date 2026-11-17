@@ -1,8 +1,8 @@
-name: Build Windows app
+name: Build apps
 
-# Every push builds the installer. When package.json has a version that isn't released yet
-# (no v<version> tag), the build is also published as a GitHub release, and installed copies
-# update themselves from it.
+# Every push builds the Windows installer and the Linux packages. When package.json has a version
+# that isn't released yet (no v<version> tag), they are published together as one GitHub release,
+# and installed copies update themselves from it. Mitsflix Bot announces it in Discord.
 on:
   push:
     branches: [ main ]
@@ -17,7 +17,13 @@ concurrency:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { os: windows-latest, flag: --win, name: windows }
+          - { os: ubuntu-22.04, flag: --linux, name: linux }
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -28,52 +34,51 @@ jobs:
       - name: Install
         run: npm install --no-audit --no-fund
 
-      - name: Release this version?
-        id: v
-        shell: bash
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
-            echo "v$VERSION is already released: building only."
-            echo "publish=never" >> "$GITHUB_OUTPUT"
-          else
-            echo "Publishing v$VERSION."
-            echo "publish=always" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build installer
-        run: npx electron-builder --win --publish never
+      - name: Build
+        run: npx electron-builder ${{ matrix.flag }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # One upload step, so the installer, its blockmap and latest.yml (which installed copies read to
-      # find updates) all land in the same release.
-      - name: Publish release
-        if: steps.v.outputs.publish == 'always'
+      - name: What was built
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          ls -la dist
-          gh release create "v$VERSION" dist/MitsflixPlayer-Setup.exe dist/MitsflixPlayer-Setup.exe.blockmap dist/latest.yml \
-            --target "$GITHUB_SHA" --title "Mitsflix Player for Windows $VERSION" \
-            --notes "$( [ -f "notes/v$VERSION.md" ] && cat "notes/v$VERSION.md" )"
+        run: ls -la dist
 
-      - name: Announce in Discord
-        if: steps.v.outputs.publish == 'always'
-        shell: bash
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          python discord_post.py \
-            --title "🖥️ Mitsflix Player for Windows $VERSION is out" \
-            --url "https://github.com/${{ github.repository }}/releases/tag/v$VERSION" \
-            --footer "Already installed? It updates itself.\n**Download:** https://github.com/${{ github.repository }}/releases/latest/download/MitsflixPlayer-Setup.exe"
-
+      # The packages plus the files installed copies read to find updates (latest.yml, latest-linux.yml).
       - uses: actions/upload-artifact@v4
         with:
-          name: MitsflixPlayer-Setup
-          path: dist/*.exe
+          name: ${{ matrix.name }}
+          path: |
+            dist/MitsflixPlayer-Setup.exe
+            dist/MitsflixPlayer-Setup.exe.blockmap
+            dist/MitsflixPlayer.AppImage
+            dist/MitsflixPlayer.deb
+            dist/latest*.yml
           if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Publish this version if it's new
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          ls -la out
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "v$VERSION is already released: built only."
+            exit 0
+          fi
+          for f in MitsflixPlayer-Setup.exe MitsflixPlayer-Setup.exe.blockmap latest.yml MitsflixPlayer.AppImage MitsflixPlayer.deb latest-linux.yml; do
+            [ -f "out/$f" ] || { echo "Missing $f: not releasing."; exit 1; }
+          done
+          gh release create "v$VERSION" out/* \
+            --target "$GITHUB_SHA" --title "Mitsflix Player $VERSION for Windows and Linux" \
+            --notes "$( [ -f "notes/v$VERSION.md" ] && cat "notes/v$VERSION.md" )"

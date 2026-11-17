@@ -1,4 +1,4 @@
-/* Mitsflix Player for Windows — the whole interface.
+/* Mitsflix Player for Windows and Linux — the whole interface.
  * Plain JavaScript, no framework. Playlist data comes through window.mitsflix (preload.js), which
  * fetches from the main process so IPTV servers don't need CORS.
  */
@@ -939,7 +939,7 @@ function viewSettings() {
   const ver = h('span');
   bridge.info().then((i) => { ver.textContent = 'Version ' + i.version; });
   box.append(h('div', { class: 'section' }, h('h2', null, 'App'),
-    h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Mitsflix Player for Windows'), h('div', { class: 's' }, ver)), updBtn),
+    h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Mitsflix Player for ' + (navigator.platform.startsWith('Win') ? 'Windows' : 'Linux')), h('div', { class: 's' }, ver)), updBtn),
     h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Updates'), upd)),
     h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Keyboard shortcuts'),
       h('div', { class: 's' }, 'Space play/pause · ← → skip 10s · ↑ ↓ volume (channel on Live TV) · F full screen · M mute · N next episode · Esc close')))));
@@ -1000,7 +1000,7 @@ function attachStream(video, sources, { live, onFatal, onReady } = {}) {
   };
   const onErr = () => {
     const code = video.error && video.error.code;
-    if (code === 4) fail('This title\'s video or audio format isn\'t supported by the Windows player yet.');
+    if (code === 4) fail('This title\'s video or audio format isn\'t supported by this player yet.');
     else fail('This title couldn\'t be played. Check your connection and try again.');
   };
   video.addEventListener('error', onErr);
@@ -1112,7 +1112,7 @@ function downloadButton(key, makeSpec, small) {
       : it.status === 'downloading' ? 'Downloading ' + pctOf(it) + '%'
       : it.status === 'paused' ? 'Paused ' + pctOf(it) + '%'
       : it.status === 'error' ? 'Try download again' : 'Queued';
-    b.title = !it ? 'Save to this PC to watch without internet' : it.status === 'done' ? 'Saved on this PC. Open Downloads' : 'Open Downloads';
+    b.title = !it ? 'Save to this computer to watch without internet' : it.status === 'done' ? 'Saved on this computer. Open Downloads' : 'Open Downloads';
   };
   b.onclick = async (e) => {
     e.stopPropagation();
@@ -1208,7 +1208,7 @@ function dlStatus(it) {
   if (it.status === 'scheduled') return 'Starts ' + dayTime(it.startAt) + (it.endAt ? ' · ' + fmtLength(it.endAt - it.startAt) : '');
   if (it.status === 'recording') return 'Recording · ' + fmtTime((Date.now() - (it.startedAt || Date.now())) / 1000) + ' · ' + size + (it.endAt ? ' · until ' + new Date(it.endAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '');
   if (it.kind === 'recording') return [dayTime(it.startedAt || it.startAt), it.seconds ? fmtLength(it.seconds * 1000) : '', size, it.note || ''].filter(Boolean).join(' · ');
-  return size + ' · Saved on this PC';
+  return size + ' · Saved on this computer';
 }
 
 function dlRow(it) {
@@ -1219,7 +1219,7 @@ function dlRow(it) {
   const btn = (text, fn, cls = '') => h('button', { class: 'btn small ' + cls, onclick: fn }, text);
   const remove = (word) => {
     const close = modal(word + ' "' + it.title + (it.sub ? ' · ' + it.sub : '') + '"?', h('div', null,
-      h('p', { style: { color: 'var(--muted)', marginTop: 0 } }, 'The file is deleted from this PC. This can\'t be undone.'),
+      h('p', { style: { color: 'var(--muted)', marginTop: 0 } }, 'The file is deleted from this computer. This can\'t be undone.'),
       h('div', { class: 'actions', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn ghost', onclick: () => close() }, 'Keep it'),
         h('button', { class: 'btn danger', onclick: () => { close(); dlCall(bridge.dlRemove(it.id)); } }, 'Delete'))));
   };
