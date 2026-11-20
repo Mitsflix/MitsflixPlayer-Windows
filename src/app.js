@@ -964,15 +964,16 @@ function viewSettings() {
   const drawUpd = () => {
     const s = updateState;
     upd.textContent = { idle: navigator.platform.startsWith('Mac') ? 'You\'ll be told here when there\'s a new version.' : 'Updates install automatically.', checking: 'Checking…', latest: 'You have the latest version.', downloading: 'Downloading update' + (s.percent ? ' · ' + s.percent + '%' : '') + '…',
-      ready: 'Update ' + (s.version || '') + ' is ready.', manual: 'Version ' + (s.version || '') + ' is out. Download it and drag it into Applications to replace this one.', error: 'Couldn\'t check for updates.', dev: 'Updates work in the installed app.' }[s.state] || '';
+      ready: 'Update ' + (s.version || '') + ' is ready.', web: 'Always up to date. For downloads and recording, get the free app at mitsflix.com/download.', manual: 'Version ' + (s.version || '') + ' is out. Download it and drag it into Applications to replace this one.', error: 'Couldn\'t check for updates.', dev: 'Updates work in the installed app.' }[s.state] || '';
     updBtn.textContent = s.state === 'ready' ? 'Restart to update' : s.state === 'manual' ? 'Download update' : 'Check for updates';
     updBtn.onclick = s.state === 'ready' || s.state === 'manual' ? () => bridge.installUpdate() : async () => { updateState = await bridge.checkUpdate(); drawUpd(); };
   };
   drawUpd(); onUpdateDraw = drawUpd;
+  if (bridge.web) { updateState = { state: 'web' }; drawUpd(); updBtn.hidden = true; }
   const ver = h('span');
-  bridge.info().then((i) => { ver.textContent = 'Version ' + i.version; });
+  bridge.info().then((i) => { ver.textContent = i.web ? 'Web version' : 'Version ' + i.version; });
   box.append(h('div', { class: 'section' }, h('h2', null, 'App'),
-    h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Mitsflix Player for ' + (navigator.platform.startsWith('Win') ? 'Windows' : navigator.platform.startsWith('Mac') ? 'Mac' : 'Linux')), h('div', { class: 's' }, ver)), updBtn),
+    h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, bridge.web ? 'Mitsflix Player in your browser' : 'Mitsflix Player for ' + (navigator.platform.startsWith('Win') ? 'Windows' : navigator.platform.startsWith('Mac') ? 'Mac' : 'Linux')), h('div', { class: 's' }, ver)), updBtn),
     h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Updates'), upd)),
     h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Keyboard shortcuts'),
       h('div', { class: 's' }, 'Space play/pause · ← → skip 10s · ↑ ↓ volume (channel on Live TV) · F full screen · M mute · N next episode · Esc close')))));
@@ -1013,7 +1014,7 @@ function attachStream(video, sources, { live, onFatal, onReady } = {}) {
     onFatal && onFatal(why);
   };
   const start = () => {
-    const url = sources[idx];
+    const url = bridge.streamUrl ? bridge.streamUrl(sources[idx]) : sources[idx];
     const isHls = /\.m3u8(\?|$)/i.test(url), isTs = /\.ts(\?|$)/i.test(url) || (live && !isHls && !/\.(mp4|mkv|webm|mov)(\?|$)/i.test(url));
     if (isHls && window.Hls && window.Hls.isSupported()) {
       hls = new window.Hls({ maxBufferLength: live ? 20 : 60, backBufferLength: 30, enableWorker: true, manifestLoadingMaxRetry: 2, levelLoadingMaxRetry: 3 });
@@ -1523,7 +1524,7 @@ function openPlayer(opts) {
 
   const togglePlay = () => { if (video.paused) video.play().catch(() => {}); else video.pause(); wake(); };
   const skip = (s) => { if (video.duration) video.currentTime = Math.min(video.duration - 1, Math.max(0, video.currentTime + s)); wake(); };
-  const toggleFull = async () => { const on = await bridge.fullscreen(); if (!window.mitsflix) { if (document.fullscreenElement) document.exitFullscreen(); else root.requestFullscreen(); } fullBtn.replaceChildren(svg(on ? ICON.exitFull : ICON.full)); };
+  const toggleFull = async () => { const on = await bridge.fullscreen(); if (!window.mitsflix || bridge.web) { if (document.fullscreenElement) document.exitFullscreen(); else root.requestFullscreen(); } fullBtn.replaceChildren(svg(on ? ICON.exitFull : ICON.full)); };
   const goNext = () => { if (opts.next) { saveNow(); const n = opts.next; close(true); n(); } };
 
   video.addEventListener('play', () => { playBtn.replaceChildren(svg(ICON.pause)); wake(); });

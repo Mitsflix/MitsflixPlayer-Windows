@@ -1,0 +1,3 @@
+/* Mitsflix Player in a browser: no window buttons to make room for, and no app-only features. */
+html.web .titlebar { padding-right: 14px; -webkit-app-region: no-drag; }
+html.web .rail-btn[data-view="downloads"], html.web .dl-btn, html.web .rec-btn { display: none !important; }
