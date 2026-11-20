@@ -40,6 +40,7 @@ function h(tag, attrs, ...kids) {
 }
 const svg = (path, vb = '0 0 24 24') => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', vb); s.innerHTML = path; return s; };
 const ICON = {
+  airplay: '<path d="M5 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-1l-1.6-2H20V5H4v10h2.6z"/><path d="M12 13l6 8H6z"/>',
   cast: '<path d="M3 17a4 4 0 0 1 4 4H5a2 2 0 0 0-2-2zm0-4a8 8 0 0 1 8 8H9a6 6 0 0 0-6-6zm0-4a12 12 0 0 1 12 12h-2A10 10 0 0 0 3 11zM3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4v-2h4V5H5v2H3z"/>',
   play: '<path d="M8 5v14l11-7z"/>',
   pause: '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>',
@@ -610,7 +611,7 @@ function viewLive() {
 
 function showChannel(pane, ch, list, keepPlaying) {
   const pl = active();
-  const video = h('video', { autoplay: true, playsinline: true });
+  const video = h('video', { autoplay: true, playsinline: true, 'x-webkit-airplay': 'allow' });
   const msg = h('div', { class: 'msg' }, h('div', { class: 'spinner' }));
   const screen = h('div', { class: 'screen', ondblclick: () => playLive(ch, list) }, video, msg);
   const epg = h('div', { class: 'epg' }, h('h3', null, ch.name));
@@ -1019,7 +1020,11 @@ function attachStream(video, sources, { live, onFatal, onReady } = {}) {
   const start = () => {
     const url = bridge.streamUrl ? bridge.streamUrl(sources[idx]) : sources[idx];
     const isHls = /\.m3u8(\?|$)/i.test(url), isTs = /\.ts(\?|$)/i.test(url) || (live && !isHls && !/\.(mp4|mkv|webm|mov)(\?|$)/i.test(url));
-    if (isHls && window.Hls && window.Hls.isSupported()) {
+    // Web player in Safari: Safari's own HLS player (it needs no extra permission from the server,
+    // and it's the one AirPlay can send to an Apple TV).
+    if (isHls && bridge.web && video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url;
+    } else if (isHls && window.Hls && window.Hls.isSupported()) {
       hls = new window.Hls({ maxBufferLength: live ? 20 : 60, backBufferLength: 30, enableWorker: true, manifestLoadingMaxRetry: 2, levelLoadingMaxRetry: 3 });
       hls.on(window.Hls.Events.ERROR, (_e, d) => {
         if (!d.fatal) return;
@@ -1445,6 +1450,13 @@ function openPlayer(opts) {
   // Cast to a Chromecast / Google TV (not in the web version, and not for downloaded copies).
   const castable = !!bridge.castFind && !/^mxfile:/i.test(opts.sources[0] || '');
   const castBtn = castable ? pb(ICON.cast, 'Cast to TV', () => (casting ? castMenu() : castPick())) : null;
+  // Web player in Safari: AirPlay to an Apple TV or AirPlay TV, shown when one is on the network.
+  const airBtn = bridge.web && window.WebKitPlaybackTargetAvailabilityEvent ? pb(ICON.airplay, 'AirPlay', () => video.webkitShowPlaybackTargetPicker()) : null;
+  if (airBtn) {
+    airBtn.hidden = true;
+    video.addEventListener('webkitplaybacktargetavailabilitychanged', (e) => { airBtn.hidden = e.availability !== 'available'; });
+    video.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', () => airBtn.classList.toggle('on', !!video.webkitCurrentPlaybackTargetIsWireless));
+  }
   let casting = null; // { name, time, duration, playing }
   ccBtn.hidden = isLive;
   checkSubs();
@@ -1520,7 +1532,7 @@ function openPlayer(opts) {
     isLive ? null : time,
     h('div', { class: 'grow' }),
     !isLive ? nextBtn : null,
-    recBtn, ccBtn, castBtn, muteBtn, vol, fullBtn);
+    recBtn, ccBtn, castBtn, airBtn, muteBtn, vol, fullBtn);
   const bottom = h('div', { class: 'bottom', onclick: (e) => e.stopPropagation(), ondblclick: (e) => e.stopPropagation() }, isLive ? null : seek, bar);
   top.addEventListener('click', (e) => e.stopPropagation());
   const menu = h('div', { class: 'menu', hidden: true, onclick: (e) => e.stopPropagation() });
