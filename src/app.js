@@ -123,6 +123,32 @@ function xtreamFromM3u(url) {
   return null;
 }
 
+// ---- Plain-English errors -----------------------------------------------------------------------
+// What a failed request means, in words a viewer can act on. r is { ok, status, error } from bridge.fetch.
+const BACKUP_TIP = ' If it keeps happening, try your backup server address.';
+function netProblem(err) {
+  const e = String(err || '');
+  if (/INTERNET_DISCONNECTED|NETWORK_CHANGED|ADDRESS_UNREACHABLE/i.test(e)) return 'You\'re not connected to the internet. Check your Wi-Fi or network and try again.';
+  if (/NAME_NOT_RESOLVED|ENOTFOUND|NAME_RESOLUTION/i.test(e)) return 'That server address couldn\'t be found. Check it\'s typed exactly as you were given it, starting with http:// and with no / at the end.';
+  if (/SSL|CERT|TLS/i.test(e)) return 'The server didn\'t accept a secure connection. If your server address starts with https://, change it to http:// and try again.';
+  if (/REFUSED/i.test(e)) return 'The server refused the connection. Check the server address (including any :port number).' + BACKUP_TIP;
+  if (/RESET|CLOSED|EMPTY_RESPONSE|BLOCKED/i.test(e)) return 'The connection was cut off. Your internet provider may be blocking this server: try your backup server address, or turn on a VPN and use your VPN server address.';
+  if (/TIMED_OUT|TIMEOUT|abort/i.test(e)) return 'The server took too long to answer. Check your internet connection and try again.' + BACKUP_TIP;
+  return 'Couldn\'t reach the server. Check your internet connection and the server address.' + BACKUP_TIP;
+}
+function httpProblem(status, what = 'login') {
+  const s = Number(status) || 0;
+  if (s === 513 || s === 401) return what === 'login' ? 'Your username or password isn\'t right. Re-enter them exactly as you were given them: they\'re case-sensitive and have no spaces.' : 'Your login was rejected. Check your username and password in Settings → Playlists.';
+  if (s === 403) return 'The server turned this login away. If you\'re using a VPN, use your VPN server address (it usually starts with apps.). Otherwise check your username and password, or ask your provider if your line is active.';
+  if (s === 456 || s === 458 || s === 429 || s === 509) return 'Your playlist is already playing on another device. It works on one device at a time, so stop it there and try again.';
+  if (s === 404) return what === 'login' ? 'There\'s no IPTV server at that address. Check the server address is typed exactly, with no / at the end.' : 'This channel or title isn\'t available any more. Try another one, or refresh your playlist.';
+  if (s === 400) return 'The server didn\'t understand the request. Check the server address has no extra bits on the end (like /get.php).';
+  if (s >= 520 && s <= 530) return `The server is down at the moment (error ${s}). It's usually back within minutes.` + BACKUP_TIP;
+  if (s >= 500) return `The server is having problems right now (error ${s}). Try again in a few minutes.` + BACKUP_TIP;
+  return s ? `The server replied with an error (${s}).` + BACKUP_TIP : netProblem('');
+}
+const problem = (r, what) => (r.status ? httpProblem(r.status, what) : netProblem(r.error));
+
 // ---- Xtream Codes API
 async function xt(pl, action, params = {}) {
   const u = new URL(pl.server + '/player_api.php');
@@ -131,16 +157,22 @@ async function xt(pl, action, params = {}) {
   if (action) u.searchParams.set('action', action);
   for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
   const r = await bridge.fetch(u.toString(), { timeoutMs: action ? 120000 : 25000 });
-  if (!r.ok) throw new Error(r.error ? 'Couldn\'t reach the server (' + r.error + ')' : 'The server replied with an error (' + r.status + ')');
-  try { return JSON.parse(r.text); } catch { throw new Error('The server sent something unexpected. Check the server address.'); }
+  if (!r.ok) throw new Error(problem(r, action ? 'content' : 'login'));
+  try { return JSON.parse(r.text); } catch {
+    throw new Error(/<html|<!doctype/i.test(r.text) ? 'That address is a website, not an IPTV server. Check the server address you were given.' : 'The server sent something unexpected. Check the server address.');
+  }
 }
 const xtUrl = (pl, kind, id, ext) => pl.server + '/' + kind + '/' + encodeURIComponent(pl.username) + '/' + encodeURIComponent(pl.password) + '/' + id + '.' + ext;
 
 async function verifyXtream(pl) {
   const r = await xt(pl);
   const ui = r && r.user_info;
-  if (!ui || String(ui.auth) === '0') throw new Error('Username or password not accepted.');
-  if (ui.status && !/active/i.test(ui.status)) throw new Error('This account is ' + String(ui.status).toLowerCase() + '.');
+  if (!ui || String(ui.auth) === '0') throw new Error(httpProblem(513));
+  const st = String(ui.status || '');
+  const ended = ui.exp_date && Number(ui.exp_date) * 1000 < Date.now();
+  if (/expired/i.test(st) || ended) throw new Error('This subscription has ended' + (ui.exp_date ? ' (on ' + new Date(Number(ui.exp_date) * 1000).toLocaleDateString() + ')' : '') + '. Renew it with your provider, then try again. Your login stays the same.');
+  if (/banned|disabled/i.test(st)) throw new Error('This line has been switched off. Contact your provider to sort it out.');
+  if (st && !/active/i.test(st)) throw new Error('This line isn\'t active (' + st.toLowerCase() + '). Contact your provider.');
   return { expires: ui.exp_date ? Number(ui.exp_date) * 1000 : null, connections: ui.max_connections || null };
 }
 
@@ -184,8 +216,8 @@ function parseM3u(text) {
 }
 async function loadM3u(pl) {
   const r = await bridge.fetch(pl.url, { timeoutMs: 120000 });
-  if (!r.ok) throw new Error(r.error ? 'Couldn\'t download the playlist (' + r.error + ')' : 'The playlist link replied with an error (' + r.status + ')');
-  if (!/#EXTM3U|#EXTINF/i.test(r.text)) throw new Error('That link isn\'t an M3U playlist.');
+  if (!r.ok) throw new Error(problem(r, 'login'));
+  if (!/#EXTM3U|#EXTINF/i.test(r.text)) throw new Error('That link didn\'t return a playlist. Check you copied the whole M3U link.');
   return parseM3u(r.text);
 }
 
@@ -972,6 +1004,7 @@ function attachStream(video, sources, { live, onFatal, onReady } = {}) {
     if (mp) { try { mp.pause(); mp.unload(); mp.detachMediaElement(); mp.destroy(); } catch { /* ignore */ } mp = null; }
     try { video.pause(); video.removeAttribute('src'); video.load(); } catch { /* ignore */ }
   };
+  const STREAM_DOWN = 'This channel isn\'t responding. It may be offline right now, or your playlist is playing on another device (it works on one at a time). Try another channel.';
   const fail = (why) => {
     if (dead) return;
     if (idx < sources.length - 1) { idx++; cleanup(); start(); return; }
@@ -985,13 +1018,14 @@ function attachStream(video, sources, { live, onFatal, onReady } = {}) {
       hls.on(window.Hls.Events.ERROR, (_e, d) => {
         if (!d.fatal) return;
         if (d.type === window.Hls.ErrorTypes.MEDIA_ERROR && !mediaRecovered) { mediaRecovered = true; hls.recoverMediaError(); return; }
-        fail(d.type === window.Hls.ErrorTypes.NETWORK_ERROR ? 'The stream isn\'t responding. It may be offline, or another device is using this playlist.' : 'This stream couldn\'t be played.');
+        const code = d.response && d.response.code;
+        fail(d.type === window.Hls.ErrorTypes.NETWORK_ERROR ? (code ? httpProblem(code, 'content') : STREAM_DOWN) : 'This stream couldn\'t be played.');
       });
       hls.on(window.Hls.Events.MANIFEST_PARSED, () => { onReady && onReady(hls); });
       hls.loadSource(url); hls.attachMedia(video);
     } else if (isTs && window.mpegts && window.mpegts.isSupported()) {
       mp = window.mpegts.createPlayer({ type: 'mpegts', isLive: !!live, url }, { enableWorker: false, lazyLoad: false, liveBufferLatencyChasing: !!live });
-      mp.on(window.mpegts.Events.ERROR, () => fail('The stream isn\'t responding. It may be offline, or another device is using this playlist.'));
+      mp.on(window.mpegts.Events.ERROR, (_type, _detail, info) => fail(info && info.code > 0 ? httpProblem(info.code, 'content') : STREAM_DOWN));
       mp.attachMediaElement(video); mp.load();
     } else {
       video.src = url;
