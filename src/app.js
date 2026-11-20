@@ -40,6 +40,7 @@ function h(tag, attrs, ...kids) {
 }
 const svg = (path, vb = '0 0 24 24') => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', vb); s.innerHTML = path; return s; };
 const ICON = {
+  cast: '<path d="M3 17a4 4 0 0 1 4 4H5a2 2 0 0 0-2-2zm0-4a8 8 0 0 1 8 8H9a6 6 0 0 0-6-6zm0-4a12 12 0 0 1 12 12h-2A10 10 0 0 0 3 11zM3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4v-2h4V5H5v2H3z"/>',
   play: '<path d="M8 5v14l11-7z"/>',
   pause: '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>',
   back10: '<path d="M12 5V2L7 6l5 4V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/><text x="12" y="16" font-size="6.5" text-anchor="middle" font-family="Segoe UI" font-weight="700">10</text>',
@@ -980,6 +981,8 @@ function viewSettings() {
   return page;
 }
 let onUpdateDraw = null;
+let castListener = null;
+if (bridge.onCast) bridge.onCast((st) => { if (castListener) castListener(st); });
 bridge.onUpdate((s) => {
   updateState = s;
   if (onUpdateDraw && state.view === 'settings') onUpdateDraw();
@@ -1433,10 +1436,16 @@ function openPlayer(opts) {
   const playBtn = pb(ICON.pause, 'Play / pause (Space)', () => togglePlay(), 'big');
   const fullBtn = pb(ICON.full, 'Full screen (F)', () => toggleFull());
   const muteBtn = pb(ICON.vol, 'Mute (M)', () => { video.muted = !video.muted; });
-  const vol = h('input', { class: 'vol', type: 'range', min: 0, max: 1, step: 0.05, value: store.get('volume', 1), oninput: () => { video.volume = Number(vol.value); video.muted = false; } });
+  const vol = h('input', { class: 'vol', type: 'range', min: 0, max: 1, step: 0.05, value: store.get('volume', 1), oninput: () => {
+    if (casting) { bridge.castControl('volume', Number(vol.value)); return; }
+    video.volume = Number(vol.value); video.muted = false; } });
   video.volume = Number(vol.value);
   const time = h('span', { class: 'time' });
   const ccBtn = pb(ICON.cc, 'Subtitles & audio', () => toggleMenu());
+  // Cast to a Chromecast / Google TV (not in the web version, and not for downloaded copies).
+  const castable = !!bridge.castFind && !/^mxfile:/i.test(opts.sources[0] || '');
+  const castBtn = castable ? pb(ICON.cast, 'Cast to TV', () => (casting ? castMenu() : castPick())) : null;
+  let casting = null; // { name, time, duration, playing }
   ccBtn.hidden = isLive;
   checkSubs();
   // Subtitles added by the viewer (found online or from a file) live in one extra track.
@@ -1483,14 +1492,18 @@ function openPlayer(opts) {
   const seek = h('div', { class: 'seek' }, h('div', { class: 'track' }), buf, fill, knob, tip);
   const ratioAt = (e) => { const r = seek.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); };
   let dragging = false;
-  seek.addEventListener('pointerdown', (e) => { if (!video.duration) return; dragging = true; seek.setPointerCapture(e.pointerId); drawSeek(ratioAt(e)); e.stopPropagation(); });
+  const seekLen = () => (casting ? casting.duration : video.duration);
+  seek.addEventListener('pointerdown', (e) => { if (!seekLen()) return; dragging = true; seek.setPointerCapture(e.pointerId); drawSeek(ratioAt(e)); e.stopPropagation(); });
   seek.addEventListener('pointermove', (e) => {
-    if (!video.duration) return;
-    const r = ratioAt(e); tip.hidden = false; tip.style.left = (r * 100) + '%'; tip.textContent = fmtTime(r * video.duration);
+    if (!seekLen()) return;
+    const r = ratioAt(e); tip.hidden = false; tip.style.left = (r * 100) + '%'; tip.textContent = fmtTime(r * seekLen());
     if (dragging) drawSeek(r);
   });
   seek.addEventListener('pointerleave', () => { if (!dragging) tip.hidden = true; });
-  seek.addEventListener('pointerup', (e) => { if (!dragging) return; dragging = false; video.currentTime = ratioAt(e) * video.duration; tip.hidden = true; });
+  seek.addEventListener('pointerup', (e) => {
+    if (!dragging) return; dragging = false; tip.hidden = true;
+    if (casting) bridge.castControl('seek', ratioAt(e) * casting.duration); else video.currentTime = ratioAt(e) * video.duration;
+  });
   const drawSeek = (r) => { fill.style.width = (r * 100) + '%'; knob.style.left = (r * 100) + '%'; };
 
   const epgLine = h('div', { class: 'sub' }, opts.sub || '');
@@ -1507,7 +1520,7 @@ function openPlayer(opts) {
     isLive ? null : time,
     h('div', { class: 'grow' }),
     !isLive ? nextBtn : null,
-    recBtn, ccBtn, muteBtn, vol, fullBtn);
+    recBtn, ccBtn, castBtn, muteBtn, vol, fullBtn);
   const bottom = h('div', { class: 'bottom', onclick: (e) => e.stopPropagation(), ondblclick: (e) => e.stopPropagation() }, isLive ? null : seek, bar);
   top.addEventListener('click', (e) => e.stopPropagation());
   const menu = h('div', { class: 'menu', hidden: true, onclick: (e) => e.stopPropagation() });
@@ -1516,14 +1529,20 @@ function openPlayer(opts) {
 
   // Controls hide after 3 seconds without the mouse moving.
   let idleTimer = null;
-  const wake = () => { root.classList.remove('idle'); clearTimeout(idleTimer); idleTimer = setTimeout(() => { if (!video.paused && menu.hidden && !dragging) root.classList.add('idle'); }, 3000); };
+  const wake = () => { root.classList.remove('idle'); clearTimeout(idleTimer); idleTimer = setTimeout(() => { if (!video.paused && menu.hidden && !dragging && !casting) root.classList.add('idle'); }, 3000); };
   root.onmousemove = wake;
   root.onclick = () => { if (!menu.hidden) { menu.hidden = true; return; } togglePlay(); };
   root.ondblclick = () => toggleFull();
   wake();
 
-  const togglePlay = () => { if (video.paused) video.play().catch(() => {}); else video.pause(); wake(); };
-  const skip = (s) => { if (video.duration) video.currentTime = Math.min(video.duration - 1, Math.max(0, video.currentTime + s)); wake(); };
+  const togglePlay = () => {
+    if (casting) { bridge.castControl(casting.playing ? 'pause' : 'play'); wake(); return; }
+    if (video.paused) video.play().catch(() => {}); else video.pause(); wake();
+  };
+  const skip = (s) => {
+    if (casting) { if (casting.duration) bridge.castControl('seek', Math.min(casting.duration - 1, Math.max(0, casting.time + s))); wake(); return; }
+    if (video.duration) video.currentTime = Math.min(video.duration - 1, Math.max(0, video.currentTime + s)); wake();
+  };
   const toggleFull = async () => { const on = await bridge.fullscreen(); if (!window.mitsflix || bridge.web) { if (document.fullscreenElement) document.exitFullscreen(); else root.requestFullscreen(); } fullBtn.replaceChildren(svg(on ? ICON.exitFull : ICON.full)); };
   const goNext = () => { if (opts.next) { saveNow(); const n = opts.next; close(true); n(); } };
 
@@ -1551,7 +1570,92 @@ function openPlayer(opts) {
   });
   video.textTracks.addEventListener && video.textTracks.addEventListener('addtrack', () => refreshTracks());
 
-  const saveNow = () => { if (opts.progressKey && video.duration && video.currentTime > 5) saveProgress(opts.progressKey, { pos: video.currentTime, dur: video.duration, ...opts.progressMeta }); };
+  const saveNow = () => {
+    if (casting) { if (opts.progressKey && casting.duration && casting.time > 5) saveProgress(opts.progressKey, { pos: casting.time, dur: casting.duration, ...opts.progressMeta }); return; }
+    if (opts.progressKey && video.duration && video.currentTime > 5) saveProgress(opts.progressKey, { pos: video.currentTime, dur: video.duration, ...opts.progressMeta });
+  };
+
+  // ---- Casting
+  const what = isLive ? 'channel' : 'title';
+  const castUrl = () => {
+    const pl = active();
+    // Chromecasts play HLS, not the raw stream the app uses for live TV.
+    if (isLive && opts.liveRef && pl && pl.type !== 'm3u') return xtUrl(pl, 'live', opts.liveRef.ch.id, 'm3u8');
+    return opts.sources[0];
+  };
+  const castPick = () => {
+    const list = h('div', { class: 'cast-list' }, h('p', { class: 'muted' }, 'Looking for TVs on your Wi-Fi…'));
+    const close = modal('Cast to a TV', list);
+    const search = async () => {
+      list.replaceChildren(h('p', { class: 'muted' }, 'Looking for TVs on your Wi-Fi…'));
+      const r = await bridge.castFind();
+      const devices = (r && r.ok && r.value) || [];
+      if (!devices.length) {
+        list.replaceChildren(h('p', null, 'No TVs found. Make sure your Chromecast or Google TV is switched on and on the same Wi-Fi as this computer.'),
+          h('button', { class: 'btn small', onclick: search }, 'Search again'));
+        return;
+      }
+      list.replaceChildren(...devices.map((d) => h('button', { class: 'cast-dev', onclick: () => { close(); startCast(d); } }, svg(ICON.cast), h('span', null, d.name))));
+    };
+    search();
+  };
+  const startCast = async (d) => {
+    const at = isLive ? 0 : (video.currentTime || opts.startAt || 0);
+    video.pause();
+    center.replaceChildren(h('div', { class: 'spinner' }), h('span', null, 'Connecting to ' + d.name + '…'));
+    const r = await bridge.castStart(d, { url: castUrl(), title: opts.title, image: opts.poster || '', live: isLive, startAt: at });
+    if (!playerSession || playerSession.video !== video) { if (r.ok) bridge.castStop(); return; }
+    if (!r.ok) {
+      center.replaceChildren();
+      toast(r.error === 'unplayable' ? 'This ' + what + ' can\'t be played on ' + d.name + '. Some live channels use a format TVs can\'t cast.'
+        : r.error === 'unreachable' ? 'Couldn\'t connect to ' + d.name + '. Check it\'s on and on the same Wi-Fi.' : 'Couldn\'t cast: ' + r.error);
+      video.play().catch(() => {});
+      return;
+    }
+    casting = { name: d.name, time: at, duration: video.duration || 0, playing: true };
+    if (stream) { stream.destroy(); stream = null; }
+    video.removeAttribute('src'); video.load();
+    castBtn.classList.add('on');
+    drawCasting();
+  };
+  const drawCasting = () => {
+    if (!casting) return;
+    center.classList.add('above');
+    center.replaceChildren(h('div', { class: 'casting' }, svg(ICON.cast), h('div', null, 'Playing on ' + casting.name),
+      h('button', { class: 'btn small', onclick: (e) => { e.stopPropagation(); stopCast(true); } }, 'Stop casting')));
+    playBtn.replaceChildren(svg(casting.playing ? ICON.pause : ICON.play));
+    if (!isLive && casting.duration) {
+      if (!dragging) drawSeek(casting.time / casting.duration);
+      time.textContent = fmtTime(casting.time) + ' / ' + fmtTime(casting.duration);
+    }
+  };
+  const castMenu = () => {
+    const close = modal('Casting to ' + casting.name, h('div', { class: 'cast-list' },
+      h('button', { class: 'btn', onclick: () => { close(); stopCast(true); } }, 'Stop casting and watch here')));
+  };
+  // Back to watching on the computer, from where the TV was.
+  const stopCast = (tellTv) => {
+    if (!casting) return;
+    const at = casting.time;
+    casting = null;
+    if (tellTv) bridge.castStop();
+    castBtn.classList.remove('on');
+    center.classList.remove('above');
+    center.replaceChildren(h('div', { class: 'spinner' }));
+    started = false; opts.startAt = isLive ? 0 : at;
+    stream = attachStream(video, opts.sources, { live: isLive, onReady: () => refreshTracks(), onFatal: (m) => { center.replaceChildren(h('span', null, m)); root.classList.remove('idle'); } });
+  };
+  castListener = (st) => {
+    if (!casting || !playerSession || playerSession.video !== video) return;
+    if (st.state === 'ENDED') { toast('Casting to ' + casting.name + ' stopped.'); stopCast(false); return; }
+    if (st.state === 'IDLE' && st.idleReason === 'ERROR') { toast('This ' + what + ' can\'t be played on ' + casting.name + '.'); bridge.castStop(); stopCast(false); return; }
+    if (st.state === 'IDLE' && st.idleReason === 'FINISHED') { casting.playing = false; saveNow(); drawCasting(); if (opts.next && !isLive) { bridge.castStop(); casting = null; goNext(); } return; }
+    casting.time = st.time || casting.time;
+    if (st.duration) casting.duration = st.duration;
+    casting.playing = st.state === 'PLAYING' || st.state === 'BUFFERING';
+    drawCasting();
+    if (Math.floor(casting.time) % 10 === 0) saveNow();
+  };
 
   // Subtitles and audio tracks (when the stream has them).
   let stream = null;
@@ -1624,6 +1728,7 @@ function openPlayer(opts) {
 
   const close = async (switching) => {
     saveNow();
+    if (casting) { casting = null; bridge.castStop(); }
     document.removeEventListener('keydown', onKey, true);
     clearTimeout(idleTimer);
     if (stream) stream.destroy();

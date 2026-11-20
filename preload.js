@@ -30,4 +30,9 @@ contextBridge.exposeInMainWorld('mitsflix', {
   subsDownload: (fileId) => ipcRenderer.invoke('subs:download', fileId),
   subsPickFile: () => ipcRenderer.invoke('subs:pickFile'),
   onUpdate: (cb) => ipcRenderer.on('update:state', (_e, s) => cb(s)),
+  castFind: () => ipcRenderer.invoke('cast:find'),
+  castStart: (device, media) => ipcRenderer.invoke('cast:start', device, media),
+  castControl: (cmd, value) => ipcRenderer.invoke('cast:control', cmd, value),
+  castStop: () => ipcRenderer.invoke('cast:stop'),
+  onCast: (cb) => ipcRenderer.on('cast:state', (_e, s) => cb(s)),
 });

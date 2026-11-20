@@ -298,6 +298,31 @@ ipcMain.handle('subs:pickFile', guard(async () => {
   return { name: path.basename(r.filePaths[0]), text: decodeText(await fs.promises.readFile(r.filePaths[0])) };
 }));
 
+// ---- Casting to a Chromecast / Google TV (see cast.js) ---------------------------------------------
+
+const cast = require('./cast');
+let castSession = null;
+ipcMain.handle('cast:find', async () => { try { return { ok: true, value: await cast.findDevices(3000) }; } catch (e) { return { ok: false, error: String(e.message || e) }; } });
+ipcMain.handle('cast:start', async (_e, device, media) => {
+  if (castSession) { const old = castSession; castSession = null; await old.stop(); }
+  const s = new cast.CastSession(device);
+  castSession = s;
+  const send = (st) => { if (castSession === s && win) win.webContents.send('cast:state', { ...st, device: device.name }); };
+  s.on('status', send);
+  s.on('closed', () => { send({ state: 'ENDED' }); if (castSession === s) castSession = null; });
+  try {
+    await s.connect();
+    await s.load({ ...media, contentType: cast.contentTypeFor(media.url) });
+    return { ok: true };
+  } catch (e) {
+    if (castSession === s) castSession = null;
+    s.end();
+    return { ok: false, error: e.message === 'unplayable' ? 'unplayable' : /ECONNREFUSED|EHOSTUNREACH|timeout|ETIMEDOUT/i.test(String(e.message)) ? 'unreachable' : String(e.message || e) };
+  }
+});
+ipcMain.handle('cast:control', (_e, cmd, value) => { if (castSession) castSession.control(cmd, value); });
+ipcMain.handle('cast:stop', async () => { if (castSession) { const s = castSession; castSession = null; await s.stop(); } });
+
 // ---- Updates ---------------------------------------------------------------------------------
 
 let updater = null;
