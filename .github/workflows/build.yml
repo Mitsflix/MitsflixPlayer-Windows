@@ -1,6 +1,6 @@
 name: Build apps
 
-# Every push builds the Windows installer and the Linux packages. When package.json has a version
+# Every push builds the Windows installer, the Mac app and the Linux packages. When package.json has a version
 # that isn't released yet (no v<version> tag), they are published together as one GitHub release,
 # and installed copies update themselves from it. Mitsflix Bot announces it in Discord.
 on:
@@ -23,6 +23,7 @@ jobs:
         include:
           - { os: windows-latest, flag: --win, name: windows }
           - { os: ubuntu-22.04, flag: --linux, name: linux }
+          - { os: macos-latest, flag: --mac, name: mac }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +53,8 @@ jobs:
             dist/MitsflixPlayer-Setup.exe.blockmap
             dist/MitsflixPlayer.AppImage
             dist/MitsflixPlayer.deb
+            dist/MitsflixPlayer.dmg
+            dist/MitsflixPlayer-mac.zip
             dist/latest*.yml
           if-no-files-found: error
 
@@ -76,9 +79,9 @@ jobs:
             echo "v$VERSION is already released: built only."
             exit 0
           fi
-          for f in MitsflixPlayer-Setup.exe MitsflixPlayer-Setup.exe.blockmap latest.yml MitsflixPlayer.AppImage MitsflixPlayer.deb latest-linux.yml; do
+          for f in MitsflixPlayer-Setup.exe MitsflixPlayer-Setup.exe.blockmap latest.yml MitsflixPlayer.AppImage MitsflixPlayer.deb latest-linux.yml MitsflixPlayer.dmg MitsflixPlayer-mac.zip latest-mac.yml; do
             [ -f "out/$f" ] || { echo "Missing $f: not releasing."; exit 1; }
           done
           gh release create "v$VERSION" out/* \
-            --target "$GITHUB_SHA" --title "Mitsflix Player $VERSION for Windows and Linux" \
+            --target "$GITHUB_SHA" --title "Mitsflix Player $VERSION for Windows, Mac and Linux" \
             --notes "$( [ -f "notes/v$VERSION.md" ] && cat "notes/v$VERSION.md" )"

@@ -17,6 +17,7 @@ const bridge = window.mitsflix || {
   subsStatus: async () => ({ ready: false, user: '' }), subsLogin: async () => ({ ok: false, error: 'Needs the installed app.' }), subsLogout: async () => ({}),
   subsSearch: async () => ({ ok: false, error: 'Needs the installed app.' }), subsDownload: async () => ({ ok: false, error: 'Needs the installed app.' }), subsPickFile: async () => ({ ok: true, value: null }),
 };
+if (navigator.platform.startsWith('Mac')) document.documentElement.classList.add('mac');
 
 const SITE = 'https://mitsflix.com';
 const CATALOG_MAX_AGE = 12 * 60 * 60 * 1000;
@@ -962,16 +963,16 @@ function viewSettings() {
   const updBtn = h('button', { class: 'btn small' }, 'Check for updates');
   const drawUpd = () => {
     const s = updateState;
-    upd.textContent = { idle: 'Updates install automatically.', checking: 'Checking…', latest: 'You have the latest version.', downloading: 'Downloading update' + (s.percent ? ' · ' + s.percent + '%' : '') + '…',
-      ready: 'Update ' + (s.version || '') + ' is ready.', error: 'Couldn\'t check for updates.', dev: 'Updates work in the installed app.' }[s.state] || '';
-    updBtn.textContent = s.state === 'ready' ? 'Restart to update' : 'Check for updates';
-    updBtn.onclick = s.state === 'ready' ? () => bridge.installUpdate() : async () => { updateState = await bridge.checkUpdate(); drawUpd(); };
+    upd.textContent = { idle: navigator.platform.startsWith('Mac') ? 'You\'ll be told here when there\'s a new version.' : 'Updates install automatically.', checking: 'Checking…', latest: 'You have the latest version.', downloading: 'Downloading update' + (s.percent ? ' · ' + s.percent + '%' : '') + '…',
+      ready: 'Update ' + (s.version || '') + ' is ready.', manual: 'Version ' + (s.version || '') + ' is out. Download it and drag it into Applications to replace this one.', error: 'Couldn\'t check for updates.', dev: 'Updates work in the installed app.' }[s.state] || '';
+    updBtn.textContent = s.state === 'ready' ? 'Restart to update' : s.state === 'manual' ? 'Download update' : 'Check for updates';
+    updBtn.onclick = s.state === 'ready' || s.state === 'manual' ? () => bridge.installUpdate() : async () => { updateState = await bridge.checkUpdate(); drawUpd(); };
   };
   drawUpd(); onUpdateDraw = drawUpd;
   const ver = h('span');
   bridge.info().then((i) => { ver.textContent = 'Version ' + i.version; });
   box.append(h('div', { class: 'section' }, h('h2', null, 'App'),
-    h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Mitsflix Player for ' + (navigator.platform.startsWith('Win') ? 'Windows' : 'Linux')), h('div', { class: 's' }, ver)), updBtn),
+    h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Mitsflix Player for ' + (navigator.platform.startsWith('Win') ? 'Windows' : navigator.platform.startsWith('Mac') ? 'Mac' : 'Linux')), h('div', { class: 's' }, ver)), updBtn),
     h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Updates'), upd)),
     h('div', { class: 'item' }, h('div', { class: 'grow' }, h('div', { class: 't' }, 'Keyboard shortcuts'),
       h('div', { class: 's' }, 'Space play/pause · ← → skip 10s · ↑ ↓ volume (channel on Live TV) · F full screen · M mute · N next episode · Esc close')))));
@@ -982,6 +983,7 @@ bridge.onUpdate((s) => {
   updateState = s;
   if (onUpdateDraw && state.view === 'settings') onUpdateDraw();
   if (s.state === 'ready') toast('A new version of Mitsflix Player is ready.', { label: 'Restart now', run: () => bridge.installUpdate() });
+  if (s.state === 'manual') toast('Mitsflix Player ' + (s.version || '') + ' is out.', { label: 'Download', run: () => bridge.installUpdate() });
 });
 
 // ============================================================================ Streams

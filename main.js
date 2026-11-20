@@ -35,6 +35,7 @@ function createWindow() {
     icon: path.join(__dirname, 'src', 'assets', 'icon.png'),
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#0b0906', symbolColor: '#f2b53e', height: 40 },
+    trafficLightPosition: { x: 14, y: 13 },   // Mac: the window buttons sit inside our 40px title bar
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
@@ -305,11 +306,14 @@ function setupUpdates() {
   try {
     updater = require('electron-updater').autoUpdater;
   } catch { return; }
-  updater.autoDownload = true;
-  updater.autoInstallOnAppQuit = true;
+  // Mac: the app isn't signed with a paid Apple certificate, and macOS only lets signed apps replace
+  // themselves. So on a Mac we only check, and offer the new download from mitsflix.com.
+  const mac = process.platform === 'darwin';
+  updater.autoDownload = !mac;
+  updater.autoInstallOnAppQuit = !mac;
   const send = (state, extra = {}) => win && win.webContents.send('update:state', { state, ...extra });
   updater.on('checking-for-update', () => send('checking'));
-  updater.on('update-available', (i) => send('downloading', { version: i.version }));
+  updater.on('update-available', (i) => send(mac ? 'manual' : 'downloading', { version: i.version }));
   updater.on('update-not-available', () => send('latest'));
   updater.on('download-progress', (p) => send('downloading', { percent: Math.round(p.percent) }));
   updater.on('update-downloaded', (i) => send('ready', { version: i.version }));
@@ -321,7 +325,10 @@ ipcMain.handle('update:check', async () => {
   if (!updater) return { state: 'dev' };
   try { await updater.checkForUpdates(); return { state: 'checking' }; } catch (e) { return { state: 'error', message: String(e.message || e) }; }
 });
-ipcMain.handle('update:install', () => { if (updater) updater.quitAndInstall(false, true); });
+ipcMain.handle('update:install', () => {
+  if (process.platform === 'darwin') return shell.openExternal('https://mitsflix.com/mac');
+  if (updater) updater.quitAndInstall(false, true);
+});
 
 app.whenReady().then(() => {
   allowStreamCors();

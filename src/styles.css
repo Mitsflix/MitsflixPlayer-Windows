@@ -36,6 +36,8 @@ img { display: block; }
 .titlebar { position: fixed; top: 0; left: 0; right: 0; height: var(--titlebar); display: flex; align-items: center; gap: 12px;
   padding: 0 150px 0 14px; -webkit-app-region: drag; background: #0b0906; border-bottom: 1px solid #17130d; z-index: 30; }
 .titlebar-logo { height: 26px; }
+/* Mac: the red/yellow/green window buttons are on the left, and there are none on the right. */
+html.mac .titlebar { padding: 0 14px 0 84px; }
 .titlebar-space { flex: 1; }
 .pill { -webkit-app-region: no-drag; display: flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 99px;
   background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 13px; cursor: pointer; }
