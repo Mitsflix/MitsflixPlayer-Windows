@@ -1045,7 +1045,7 @@ function attachStream(video, sources, { live, onFatal, onReady } = {}) {
   };
   const onErr = () => {
     const code = video.error && video.error.code;
-    if (code === 4) fail('This title\'s video or audio format isn\'t supported by this player yet.');
+    if (code === 4) fail(bridge.web ? 'This one can\'t play in a web browser. Not all content works here: watch it in the Mitsflix Player app (or TiviMax on Apple devices).' : 'This title\'s video or audio format isn\'t supported by this player yet.');
     else fail('This title couldn\'t be played. Check your connection and try again.');
   };
   video.addEventListener('error', onErr);
