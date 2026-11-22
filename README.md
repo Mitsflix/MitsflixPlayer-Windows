@@ -19,7 +19,7 @@
 
 Works on Windows 10 and 11 (64-bit). The app updates itself when a new version is out.
 
-On a TV box or Fire Stick? Use the Android version: Downloader code **6284643**.
+On a TV box or Fire Stick? Use the Android version: Downloader code **9390706**.
 
 ### Linux
 
