@@ -1512,6 +1512,8 @@ function openPlayer(opts) {
     if (dragging) drawSeek(r);
   });
   seek.addEventListener('pointerleave', () => { if (!dragging) tip.hidden = true; });
+  // A drag the system took over (a gesture, an incoming call) just ends without seeking.
+  seek.addEventListener('pointercancel', () => { dragging = false; tip.hidden = true; });
   seek.addEventListener('pointerup', (e) => {
     if (!dragging) return; dragging = false; tip.hidden = true;
     if (casting) bridge.castControl('seek', ratioAt(e) * casting.duration); else video.currentTime = ratioAt(e) * video.duration;

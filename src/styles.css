@@ -243,7 +243,9 @@ html.mac .titlebar { padding: 0 14px 0 84px; }
 .player .top .title { font-size: 20px; font-weight: 700; }
 .player .top .sub { color: var(--muted); font-size: 14px; }
 .player .bottom { padding: 40px 24px 18px; background: linear-gradient(0deg, rgba(0,0,0,.85), transparent); }
-.player .seek { position: relative; height: 18px; cursor: pointer; display: flex; align-items: center; }
+.player .seek { position: relative; height: 18px; cursor: pointer; display: flex; align-items: center; touch-action: none; }
+/* Touch screens: a taller bar to hit and a bigger knob to drag. */
+@media (pointer: coarse) { .player .seek { height: 34px; } .player .seek .knob { width: 22px; height: 22px; margin-left: -11px; } }
 .player .seek .track { position: absolute; left: 0; right: 0; height: 5px; border-radius: 5px; background: rgba(255,255,255,.22); }
 .player .seek .buf { position: absolute; left: 0; height: 5px; border-radius: 5px; background: rgba(255,255,255,.35); }
 .player .seek .fill { position: absolute; left: 0; height: 5px; border-radius: 5px; background: var(--gold); }
