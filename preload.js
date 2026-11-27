@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('mitsflix', {
   cacheClear: (prefix) => ipcRenderer.invoke('cache:clear', prefix),
   open: (url) => ipcRenderer.invoke('app:open', url),
   info: () => ipcRenderer.invoke('app:info'),
+  convert: (url) => ipcRenderer.invoke('tx:url', url),
   fullscreen: (on) => ipcRenderer.invoke('win:fullscreen', on),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),

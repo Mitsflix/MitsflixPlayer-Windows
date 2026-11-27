@@ -301,6 +301,25 @@ ipcMain.handle('subs:pickFile', guard(async () => {
 // ---- Casting to a Chromecast / Google TV (see cast.js) ---------------------------------------------
 
 const cast = require('./cast');
+
+// Films and episodes the built-in player can't decode (Dolby/DTS audio, HEVC or 10-bit video) are
+// converted on the fly by the bundled ffmpeg (tx.js). Downloads play through it too.
+let tx;
+const converter = () => {
+  if (tx === undefined) {
+    tx = require('./tx').start({ resolveLocal: (u) => {
+      const m = /^mxfile:\/\/play\/([a-f0-9]{16})\./i.exec(u);
+      const item = m && downloads ? downloads.get(m[1]) : null;
+      return item && item.status === 'done' ? item.file : null;
+    } });
+  }
+  return tx;
+};
+ipcMain.handle('tx:url', async (_e, url) => {
+  const c = converter();
+  if (!c) return null;
+  try { return await c.url(String(url || '')); } catch { return null; }
+});
 let castSession = null;
 ipcMain.handle('cast:find', async () => { try { return { ok: true, value: await cast.findDevices(3000) }; } catch (e) { return { ok: false, error: String(e.message || e) }; } });
 ipcMain.handle('cast:start', async (_e, device, media) => {

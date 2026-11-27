@@ -997,6 +997,7 @@ let activeStream = null;  // only one stream at a time (most playlists allow one
 
 function attachStream(video, sources, { live, onFatal, onReady } = {}) {
   let hls = null, mp = null, idx = 0, dead = false, mediaRecovered = false;
+  let txUrl = null, txTried = false;   // the converted stream, when this title needed one (tx.js)
   const remote = !/^mxfile:/i.test(sources[0] || '');
   const busy = remote ? dlRecording() : null;
   if (busy) {
@@ -1014,11 +1015,11 @@ function attachStream(video, sources, { live, onFatal, onReady } = {}) {
   const STREAM_DOWN = 'This channel isn\'t responding. It may be offline right now, or your playlist is playing on another device (it works on one at a time). Try another channel.';
   const fail = (why) => {
     if (dead) return;
-    if (idx < sources.length - 1) { idx++; cleanup(); start(); return; }
+    if (idx < sources.length - 1) { idx++; txUrl = null; txTried = false; cleanup(); start(); return; }
     onFatal && onFatal(why);
   };
   const start = () => {
-    const url = bridge.streamUrl ? bridge.streamUrl(sources[idx]) : sources[idx];
+    const url = txUrl || (bridge.streamUrl ? bridge.streamUrl(sources[idx]) : sources[idx]);
     const isHls = /\.m3u8(\?|$)/i.test(url), isTs = /\.ts(\?|$)/i.test(url) || (live && !isHls && !/\.(mp4|mkv|webm|mov)(\?|$)/i.test(url));
     // Web player in Safari: Safari's own HLS player (it needs no extra permission from the server,
     // and it's the one AirPlay can send to an Apple TV).
@@ -1043,15 +1044,46 @@ function attachStream(video, sources, { live, onFatal, onReady } = {}) {
     }
     video.play().catch(() => { /* autoplay waits for data */ });
   };
+  // Films and episodes whose audio or video the built-in player can't decode (Dolby, DTS, HEVC,
+  // 10-bit): the app converts them on the fly and carries on from the same spot. Desktop app only.
+  const convert = async (onlyIfNeeded) => {
+    if (txTried || live || bridge.web || !bridge.convert) return false;
+    txTried = true;
+    const pos = video.currentTime || 0;
+    const r = await bridge.convert(sources[idx]).catch(() => null);
+    if (dead) return true;
+    if (!r || !r.url || (onlyIfNeeded && !r.needs)) return false;
+    cleanup();
+    txUrl = r.url;
+    if (pos > 2) {
+      const back = () => { video.removeEventListener('loadedmetadata', back); try { video.currentTime = pos; } catch { /* ignore */ } };
+      video.addEventListener('loadedmetadata', back);
+    }
+    start();
+    return true;
+  };
+  // Some files play with pictures but no sound (the audio is a kind the player skips): check once.
+  const onPlaying = () => {
+    video.removeEventListener('playing', onPlaying);
+    if (live || bridge.web || txUrl) return;
+    setTimeout(() => {
+      if (!dead && !txUrl && video.currentTime > 1 && video.webkitAudioDecodedByteCount === 0) convert(true);
+    }, 5000);
+  };
+  video.addEventListener('playing', onPlaying);
   const onErr = () => {
     const code = video.error && video.error.code;
+    if (code === 4 && !txTried && !live && !bridge.web && bridge.convert) {
+      convert(false).then((ok) => { if (!ok) fail('This title\'s video or audio format isn\'t supported by this player yet.'); });
+      return;
+    }
     if (code === 4) fail(bridge.web ? 'This one can\'t play in a web browser. Not all content works here: watch it in the Mitsflix Player app (or TiviMax on Apple devices).' : 'This title\'s video or audio format isn\'t supported by this player yet.');
     else fail('This title couldn\'t be played. Check your connection and try again.');
   };
   video.addEventListener('error', onErr);
   if (activeStream && activeStream !== preview) activeStream.destroy();
   start();
-  const handle = { destroy() { dead = true; video.removeEventListener('error', onErr); cleanup(); if (held) { held = false; bridge.dlHold(-1); } if (activeStream === handle) activeStream = null; }, get hls() { return hls; } };
+  const handle = { destroy() { dead = true; video.removeEventListener('error', onErr); video.removeEventListener('playing', onPlaying); cleanup(); if (held) { held = false; bridge.dlHold(-1); } if (activeStream === handle) activeStream = null; }, get hls() { return hls; } };
   activeStream = handle;
   return handle;
 }
